@@ -76,6 +76,8 @@ main_loop_get_key:
     jr z, main_loop_get_key
     cp BACKSPACE
     jr z, backspace_pressed
+    cp ENTER
+    jp z, insert_char
     cp 127
     jp c, insert_char
     cp USER_QUIT
@@ -198,12 +200,35 @@ insert_char:
     inc hl
     ld (doc_pointer), hl
 
+    ; Was the key the ENTER / return key??
+    cp ENTER
+    jr z, enter_pressed
+
     ld a, (cursor_x)
     inc a
     ld (cursor_x), a
 
     ; Redraw the current row
     call show_current_line
+
+    jp main_loop
+
+enter_pressed:
+    ; User has pressed ENTER / return
+    ; It is like they are inserting a character.
+    ; But the character splits the lines up.
+    ld hl, (doc_lines)
+    inc hl
+    ld (doc_lines), hl
+
+    ld hl, (cursor_y)
+    inc hl
+    ld (cursor_y), hl
+
+    ld a, 0
+    ld (cursor_x), a
+    
+    call show_screen
 
     jp main_loop
 
@@ -912,6 +937,8 @@ get_user_action:
     ret nc                              ; Ordinary key press
     cp BACKSPACE
     ret z
+    cp ENTER
+    ret z
     cp $18                              ; CTRL_X
     jr z, get_user_action_quit
     cp ESC                              ; ESC
@@ -1022,6 +1049,7 @@ TAB equ 9
 ESC equ 27
 BDOS equ 5
 BACKSPACE equ $7F
+ENTER equ $0D
 BDOS_CONSOLE_INPUT equ 6
 
 USER_CURSOR_UP equ 128
