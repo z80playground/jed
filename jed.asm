@@ -462,18 +462,6 @@ cursor_right:
     inc a
     ld (cursor_x), a
     ld hl, (doc_pointer)
-;     inc hl
-;     ld a, (hl)
-;     cp END_OF_TEXT
-;     jp nz, cursor_right1
-;     ; If we hit the end of file, roll back
-;     ld a, (cursor_x)
-;     dec a
-;     ld (cursor_x), a
-;     jp main_loop
-; cursor_right1:
-;     ; Did they go past the end of a line?
-;     dec hl
     ld a, (hl)
     inc hl
     ld (doc_pointer), hl
@@ -482,7 +470,6 @@ cursor_right:
     jp main_loop
 cursor_right_wrap:
     ; Cursor has gone off the end of line x onto start of line x+1
-    ;call skip_to_start_of_next_line
     xor a
     ld (cursor_x), a                ; Set cursor to start of line
     ld a, (cursor_y)
@@ -1017,41 +1004,13 @@ get_user_action_page_down:
     ret
         
 test_stuff:
-db 'show_screen:',EOL
-db '    ; Redraw the entire screen.',EOL
-db '    ; We draw starting at a given set of coords, e.g.',EOL
-db '    ; 0,0 to start at the top of the doc.',EOL
-db '    ; 10,0 to start at the top of the doc, but scrolled across 10 chars.',EOL
-db '    ; 0,20 to start on line 21, scrolled to the left.',EOL
-db '    ; We may be showing a selected area, if the selected start loc isn''t FFFF. Or maybe it is?',EOL
-db '    ; The selected area marks a location in the doc to start the selection,',EOL
-db '    ; and a location to stop the selection.',EOL
-db '    call cls ',EOL
-db '    ld hl, (doc_start)',EOL
-db 'show_screen1:',EOL
-db '    ld a, (hl)',EOL
-db '    cp END_OF_TEXT',EOL
-db '    ret z',EOL
-db '    cp EOL ',EOL
-db '    jp z, show_screen2',EOL
-db '    call print_a',EOL
-db '    inc hl',EOL
-db '    jr show_screen1',EOL
-db 'show_screen2:',EOL
-db '    ld a, 13',EOL
-db '    call print_a',EOL
-db '    ld a, 10',EOL
-db '    call print_a',EOL
-db '    inc hl',EOL
-db '    jr show_screen1',EOL
-db EOL
-db 'print_a:',EOL
-db '    exx',EOL
-db '    ld c, BDOS_CONSOLE_OUTPUT',EOL
-db '    ld e, a',EOL
-db '    call BDOS',EOL
-db '    exx',EOL
-db '    ret',END_OF_TEXT
+db 'Example file',EOL
+db 'With',EOL
+db 'not',EOL
+db 'much',EOL
+db 'in',EOL
+db 'it!',EOL
+db 'The end.',END_OF_TEXT
 
 include "../cpm-fat/message.asm"
 
