@@ -175,6 +175,18 @@ insert_char:
     sbc hl, de
     jp c, out_of_memory
 
+    ; Check length of current line. If it is 255 we cannot allow any more, unless we are pressing ENTER!
+    cp ENTER
+    jr z, insert_char1
+    ld d, a
+    ld hl, (doc_pointer)
+    call skip_to_start_of_line
+    call get_line_length
+    cp 255
+    jp z, main_loop
+    ld a, d
+
+insert_char1:
     ; Move everything from current pos up by one.
     ld hl, (doc_end)
     ld de, (doc_pointer)
@@ -440,33 +452,37 @@ cursor_left_wrap:
     jp main_loop
 
 cursor_right:
+    ; If we are at the end of the file, we can't go right
+    ld hl, (doc_pointer)
+    ld a, (hl)
+    cp END_OF_TEXT
+    jp z, main_loop
+
     ld a, (cursor_x)
     inc a
     ld (cursor_x), a
-    ; Has cursor right moved to the end of the doc
     ld hl, (doc_pointer)
-    inc hl
+;     inc hl
+;     ld a, (hl)
+;     cp END_OF_TEXT
+;     jp nz, cursor_right1
+;     ; If we hit the end of file, roll back
+;     ld a, (cursor_x)
+;     dec a
+;     ld (cursor_x), a
+;     jp main_loop
+; cursor_right1:
+;     ; Did they go past the end of a line?
+;     dec hl
     ld a, (hl)
-    cp END_OF_TEXT
-    jp nz, cursor_right1
-    ; If we hit the end of file, roll back
-    ld a, (cursor_x)
-    dec a
-    ld (cursor_x), a
-    jp main_loop
-cursor_right1:
-    ; Did they go past the of a line?
-    dec hl
-    ld a, (hl)
     inc hl
+    ld (doc_pointer), hl
     cp EOL
     jr z, cursor_right_wrap
-    ld (doc_pointer), hl
     jp main_loop
 cursor_right_wrap:
     ; Cursor has gone off the end of line x onto start of line x+1
     ;call skip_to_start_of_next_line
-    ld (doc_pointer), hl
     xor a
     ld (cursor_x), a                ; Set cursor to start of line
     ld a, (cursor_y)
