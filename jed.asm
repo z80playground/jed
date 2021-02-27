@@ -377,21 +377,14 @@ cursor_down:
     ld hl, (cursor_y)
     inc hl
     ld (cursor_y), hl
-    ; Update the doc_pointer
+    ; Update the doc_pointer and cursor_x
     ld hl, (doc_pointer)
     call skip_to_start_of_next_line
-    call get_line_length                ; length is in a, hl still pointing at start of line
-    ld b, a
-    dec b
     ld a, (cursor_x)
-    cp b
-    jr c, cursor_down_ok
-    jr z, cursor_down_ok
-    ld a, b
-    ld (cursor_x), a
-cursor_down_ok:
     call skip_cols
     ld (doc_pointer), hl
+    ld a, c
+    ld (cursor_x), a
     jp main_loop
 
 cursor_up:
@@ -401,72 +394,79 @@ cursor_up:
     jp z, main_loop
     dec hl
     ld (cursor_y), hl
-    ; Update the doc_pointer
+    ; Update the doc_pointer and cursor_x
     ld hl, (doc_pointer)
     call skip_to_start_of_previous_line
-    call get_line_length                ; length is in a, hl still pointing at start of line
-    ld b, a
-    dec b
     ld a, (cursor_x)
-    cp b
-    jr c, cursor_up_ok
-    jr z, cursor_up_ok
-    ld a, b
-    ld (cursor_x), a
-cursor_up_ok:
     call skip_cols
     ld (doc_pointer), hl
+    ld a, c
+    ld (cursor_x), a
     jp main_loop
 
 cursor_left:
-    ld a, (cursor_x)
-    dec a
-    ld (cursor_x), a
-    ; Has cursor moved off the top of the doc?
+    ; Move the cursor left...
+    ; Is cursor already at the start of the doc?
     ld hl, (doc_pointer)
     dec hl
     ld a, (hl)
     cp START_OF_TEXT
-    jr nz, cursor_left1
-    ; Cursor is at the start of doc, so roll back
+    jp z, main_loop                 ; abort if at start of doc
+
     ld a, (cursor_x)
-    inc a
+    dec a
     ld (cursor_x), a
-    jp main_loop
-cursor_left1:
-    cp EOL
+
+    ld a, (hl)
+    cp EOL                          ; Are we wrapping back onto previous row?
     jr z, cursor_left_wrap 
-    ; Cursor has moved left.
+    cp TAB                          ; Have we moved onto a tab?
+    jr z, cursor_left_tab
+    ; Normal cursor left....
     ld (doc_pointer), hl
     jp main_loop
 cursor_left_wrap:
     ; Cursor has gone off the left of line x onto end of line x-1
-    ld (doc_pointer), hl
     call skip_to_start_of_line
-    call get_line_length
-    dec a
+    ld a, (cursor_x)
+    call skip_cols
+    ld (doc_pointer), hl
+    ld a, c
     ld (cursor_x), a                ; Set cursor to end of line
     ld a, (cursor_y)
     dec a
     ld (cursor_y), a
     jp main_loop
+cursor_left_tab:
+    ; If we hit a tab recalulate the cursor_x position by going to the start of the line
+    ; and counting along again.
+    call skip_to_start_of_line
+    ld a, (cursor_x)
+    call skip_cols
+    ld (doc_pointer), hl
+    ld a, c
+    ld (cursor_x), a
+    jp main_loop
 
 cursor_right:
+    ; Move to the right...
     ; If we are at the end of the file, we can't go right
     ld hl, (doc_pointer)
     ld a, (hl)
     cp END_OF_TEXT
     jp z, main_loop
 
-    ld a, (cursor_x)
+    ld a, (cursor_x)                ; Move one space right
     inc a
     ld (cursor_x), a
     ld hl, (doc_pointer)
     ld a, (hl)
     inc hl
     ld (doc_pointer), hl
-    cp EOL
+    cp EOL                          ; but if we were on a CR, wrap to next line
     jr z, cursor_right_wrap
+    cp TAB
+    jr z, cursor_right_tab          ; And if we were on a tab, move extra spaces if needed
     jp main_loop
 cursor_right_wrap:
     ; Cursor has gone off the end of line x onto start of line x+1
@@ -476,6 +476,14 @@ cursor_right_wrap:
     inc a
     ld (cursor_y), a                ; On next line
     jp main_loop
+cursor_right_tab:
+    ld a, (cursor_x)                ; For TAB, we need to end up on a mod-4 boundary
+    and %00000011
+    jp z, main_loop
+    ld a, (cursor_x)
+    inc a
+    ld (cursor_x), a
+    jr cursor_right_tab
 
 cursor_home:
     ; Move cursor to start of the line.
@@ -731,16 +739,22 @@ show_screen:
     ld (shown_lines), a
 show_screen_row:
     ld a, (screen_left)
-    cp 0
-    call nz, skip_cols
+    ld (current_col), a                 ; Keep track of the current column we are displaying
+    call skip_cols
+    jr z, shown_enough
     ld b, VIEW_WIDTH                     ; b = cols left to show
 show_screen1:
     ld a, (hl)
     cp END_OF_TEXT
     jp z, show_screen_done
     cp EOL 
-    jp z, show_screen2
+    jp z, show_screen_eol
+    cp TAB 
+    jp z, show_screen_tab
     call print_a
+    ld a, (current_col)
+    inc a
+    ld (current_col), a
     dec b
     jr z, shown_enough
     inc hl
@@ -748,13 +762,14 @@ show_screen1:
 shown_enough:
     call skip_to_start_of_next_line
     dec hl
-show_screen2:
+show_screen_eol:
+    ld a, (screen_left)
+    ld (current_col), a                 ; start a new row
     ld a, (shown_lines)
     inc a
     ld (shown_lines), a
     cp VIEW_HEIGHT
     jr nc, show_screen_done
-
     ld a, 13
     call print_a
     ld a, 10
@@ -764,23 +779,73 @@ show_screen2:
 show_screen_done:
     call show_cursor
     ret
+show_screen_tab:
+    push bc
+    ld a, (current_col)
+    and %00000011
+    ld b, a
+    ld a, TAB_WIDTH
+    sub b
+    ld b, a                 ; b stores how long a tab is
+show_screen_tab1:
+    ld a, '_'               ; show a tab
+    call print_a
+    ld a, (current_col)
+    inc a
+    ld (current_col), a
+    djnz show_screen_tab1
+    inc hl
+    pop bc
+    jr show_screen1
 
 skip_cols:
     ; We are pointing to the doc in hl.
     ; This skips across "a" cols.
+    ; If a TAB is found we need to take that into account.
     ; Returns Z if could not skip that number of cols, or NZ if all good.
+    ; Returns the new doc pointer in hl.
+    ; Returns the new cursor_x in c.
+    ld c, 0                         ; c = current col = 0
     or a
-    ret z
-    ld b, a
+    jr z, skip_cols_done            ; return with NZ if no cols to skip
+    ld b, a                         ; b = number of cols to skip
 skip_col:
     ld a, (hl)
     cp END_OF_TEXT
-    ret z
+    ret z                           ; exit with Z if found end of doc
     cp EOL 
-    ret z
-    inc hl
+    ret z                           ; exit with Z if found end of row
+    cp TAB
+    jr nz, skip_cols_end_tab0
+    ; If we are on a tab we need to swallow 1, 2 or 3 increments
+    ld a, c
+    and %00000011
+    ld d, a
+    ld a, 3
+    sub d                   ; for first char of tab, a = 3, 2nd a = 2, 3rd a = 1, 4th a = 0
+    jr z, skip_cols_end_tab0
+    dec b
+    jr z, skip_cols_done
+    dec a
+    jr z, skip_cols_end_tab1        ; max 2
+    dec b
+    jr z, skip_cols_done
+    dec a
+    jr z, skip_cols_end_tab2        ; max 1
+    dec b
+    jr z, skip_cols_done
+skip_cols_end_tab3:
+    inc c
+skip_cols_end_tab2:
+    inc c
+skip_cols_end_tab1:
+    inc c
+skip_cols_end_tab0:
+    inc c                           ; increase col counter
+    inc hl                          ; increase doc pointer
     djnz skip_col
-    or 1            ; return NZ
+skip_cols_done:
+    or 1                            ; return NZ
     ret
 
 skip_lines:
@@ -1009,7 +1074,14 @@ db 'With',EOL
 db 'not',EOL
 db 'much',EOL
 db 'in',EOL
-db 'it!',EOL
+db 'it! I have made it a really long line so that there is the option to scroll right if needed to prove a point.',EOL
+db TAB,'But these lines',EOL
+db TAB,'are indented',EOL
+db TAB,'by one tab each!!!',EOL
+db ' ',TAB,'And this line goes "space", "tab"',EOL
+db '  ',TAB,'And this line goes "space", "space", "tab"',EOL
+db '   ',TAB,'And this line goes 3x"space" "tab"',EOL
+db '0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ',EOL
 db 'The end.',END_OF_TEXT
 
 include "../cpm-fat/message.asm"
@@ -1017,6 +1089,7 @@ include "../cpm-fat/message.asm"
 ; CONSTANTS
 VIEW_WIDTH equ 80
 VIEW_HEIGHT equ 20
+TAB_WIDTH equ 4
 END_OF_TEXT equ 26
 START_OF_TEXT equ 2
 EOL equ 13
@@ -1059,6 +1132,8 @@ selection_end:
 screen_top:
     dw 0
 screen_left:
+    db 0
+current_col:
     db 0
 doc_pointer:
     dw 0
@@ -1141,6 +1216,12 @@ show_current_char:
     ld a, (hl)
     cp EOL
     jr z, show_eol
+    cp END_OF_TEXT
+    jr z, show_eot
+    cp TAB
+    jr z, show_tab
+    call print_a
+    ld a, ' '
     call print_a
     ld a, ' '
     call print_a
@@ -1149,6 +1230,22 @@ show_eol:
     ld a, 'C'
     call print_a
     ld a, 'R'
+    call print_a
+    ret
+show_eot:
+    ld a, 'E'
+    call print_a
+    ld a, 'N'
+    call print_a
+    ld a, 'D'
+    call print_a
+    ret
+show_tab:
+    ld a, 'T'
+    call print_a
+    ld a, 'A'
+    call print_a
+    ld a, 'B'
     call print_a
     ret
 
