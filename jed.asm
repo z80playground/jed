@@ -103,12 +103,54 @@ main_loop_get_key:
 backspace_pressed:
     ; User has pressed "< BACKSPACE"
     ; Not allowed if right at start of doc...
+    xor a
+    ld (need_to_redraw_screen), a
     ld hl, (doc_pointer)
     dec hl
     ld a, (hl)
     cp START_OF_TEXT
     jr z, main_loop
 
+    ; Did we just backspace into the previous line?
+    cp EOL
+    jr nz, normal_delete
+
+join_with_previous_line:
+    ; Deleting into the previous line
+    ; document shrinks by one line
+    ld hl, (doc_lines)
+    dec hl
+    ld (doc_lines), hl
+
+    ; Work out where the cursor will be
+    ld hl, (doc_pointer)
+    dec hl
+    call skip_to_start_of_line
+    ld a, 255
+    call skip_cols                  ; go to end of previous line
+    ld a, c
+    ld (cursor_x), a
+
+    ; move cursor up
+    ld hl, (cursor_y)
+    dec hl
+    ld (cursor_y), hl
+    
+    ;Force screen redraw later....
+    ld a, 1
+    ld (need_to_redraw_screen), a
+    jr backspace_pressed1
+
+normal_delete:
+    ; Work out where the cursor will be after this deletion
+    call skip_to_start_of_line
+    ld a, (cursor_x)
+    dec a
+    call skip_cols
+    ld a, c
+    ld (cursor_x), a
+
+backspace_pressed1:
     ; Move everything in memory from current pos down by one.
     ld hl, (doc_end)
     ld de, (doc_pointer)
@@ -125,7 +167,6 @@ backspace_pressed:
     ; Copy down the remaining doc by 1 byte
     ld hl, (doc_pointer)
     dec hl
-    ld a, (hl)                          ; Note what the char is that we are deleting
     ld (doc_pointer), hl
     inc hl
     ld e, l
@@ -134,37 +175,17 @@ backspace_pressed:
     inc bc
     ldir                                
 
-    ; Did we just backspace into the previous line?
-    cp EOL
-    jr z, join_with_previous_line
-
-    ld a, (cursor_x)
-    dec a
-    ld (cursor_x), a
+    ld a, (need_to_redraw_screen)
+    or a
+    jr nz, backspace_redraw
 
     ; Redraw the current row
     call show_current_line
-
     jp main_loop
 
-join_with_previous_line:
-    ld a, (doc_lines)
-    dec a
-    ld (doc_lines), a
-    ld hl, (doc_pointer)
-    push hl
-    call skip_to_start_of_line
-    ex de, hl
-    pop hl
-    or a
-    sbc hl, de                      ; Calculate where we are in the line
-    ld a, l
-    ld (cursor_x), a
-    ld hl, (cursor_y)
-    dec hl
-    ld (cursor_y), hl
+backspace_redraw:
     call show_screen
-    jp main_loop
+    jp main_loop    
 
 insert_char:
     ; Char to insert is in A
@@ -216,6 +237,9 @@ insert_char1:
     cp ENTER
     jr z, enter_pressed
 
+    cp TAB
+    jr z, tab_pressed
+
     ld a, (cursor_x)
     inc a
     ld (cursor_x), a
@@ -223,6 +247,22 @@ insert_char1:
     ; Redraw the current row
     call show_current_line
 
+    jp main_loop
+
+tab_pressed:
+    ; User has pressed the TAB key.
+    ; The cursor may move right 4, 3, 2 or 1 char.
+    ld a, (cursor_x)
+    ld b, a
+tab_pressed1:
+    inc a
+    inc b
+    and %00000011
+    or a
+    jr nz, tab_pressed1
+    ld a, b
+    ld (cursor_x), a
+    call show_current_line
     jp main_loop
 
 enter_pressed:
@@ -269,8 +309,8 @@ show_current_line:
     ld hl, (doc_pointer)
     call skip_to_start_of_line
     ld a, (screen_left)
-    cp 0
-    call nz, skip_cols
+    ld (current_col), a                 ; Keep track of the current column we are displaying
+    call skip_cols
     ld b, VIEW_WIDTH                     ; b = cols left to show
 show_current_line1:
     ld a, (hl)
@@ -278,7 +318,12 @@ show_current_line1:
     jp z, show_current_line2
     cp EOL 
     jp z, show_current_line2
+    cp TAB
+    jp z, show_current_line_tab
     call print_a
+    ld a, (current_col)
+    inc a
+    ld (current_col), a
     inc hl
     djnz show_current_line1
     ret
@@ -287,6 +332,26 @@ show_current_line2:
     ld a, ' '
     call print_a
     djnz show_current_line2
+    ret
+show_current_line_tab:
+    ld c, b
+    ld a, (current_col)
+    and %00000011
+    ld b, a
+    ld a, TAB_WIDTH
+    sub b
+    ld b, a                 ; b stores how long a tab is
+show_current_line_tab1:
+    ld a, ' '               ; show a tab
+    call print_a
+    dec c
+    ld a, (current_col)
+    inc a
+    ld (current_col), a
+    djnz show_current_line_tab1
+    inc hl
+    ld b, c
+    djnz show_current_line1
     ret
 
 out_of_memory:
@@ -428,7 +493,7 @@ cursor_left:
 cursor_left_wrap:
     ; Cursor has gone off the left of line x onto end of line x-1
     call skip_to_start_of_line
-    ld a, (cursor_x)
+    ld a, 255
     call skip_cols
     ld (doc_pointer), hl
     ld a, c
@@ -495,41 +560,33 @@ cursor_home:
     ; Check location of first non-space char on this line
     ld hl, (doc_pointer)
     call skip_to_start_of_line
-    call find_position_of_first_non_space_char  ; into a
-    ld b, a
+    call skip_spaces                            ; col into into c, pointer into hl
     ld a, (cursor_x)
-    cp b
-    jr c, cursor_home_start_of_line
+    cp c                                        ; is the first non-space where we already are?
+    jr c, cursor_home_start_of_line             ; If so, go to the start of the line
     jr z, cursor_home_start_of_line
     ; Move to first non-space
-    ld a, b
-    push af
-    call skip_cols
+    ld a, c
     ld (doc_pointer), hl
-    pop af
     ld (cursor_x), a
     jp main_loop
 cursor_home_start_of_line:
+    call skip_to_start_of_line
     ld (doc_pointer), hl
-    ld a, 0
+    xor a
     ld (cursor_x), a
     jp main_loop
 
 cursor_end:
     ; Move cursor to the end of the current line.
     ld hl, (doc_pointer)
-cursor_end1:
-    ld a, (hl)
-    cp END_OF_TEXT
-    jp z, main_loop
-    cp EOL
-    jp z, main_loop
-    inc hl
+    call skip_to_start_of_line
+    ld a, 255
+    call skip_cols
     ld (doc_pointer), hl
-    ld a, (cursor_x)
-    inc a
+    ld a, c
     ld (cursor_x), a
-    jr cursor_end1
+    jp main_loop
 
 cursor_page_down:
     ; Move the cursor down VIEW_HEIGHT-1 rows
@@ -619,31 +676,6 @@ cursor_page_up_ok:
 exit:
     call cls
     jp 0
-
-find_position_of_first_non_space_char:
-    ; Pass in pointer to doc in hl.
-    ; preserve hl
-    ; return in a position of first non-space, i.e. 0 for first col
-    push hl
-    xor b
-find_pos_loop:
-    ld a, (hl)
-    cp END_OF_TEXT
-    jr z, find_pos_done
-    cp EOL
-    jr z, find_pos_done
-    cp ' '
-    jr z, find_pos_cont
-    cp TAB
-    jr z, find_pos_cont
-find_pos_done:
-    pop hl
-    ld a, b
-    ret
-find_pos_cont:
-    inc hl
-    inc b
-    jr find_pos_loop
 
 set_cursor_position:
     ; Put the cursor on the screen at the correct position.
@@ -788,7 +820,7 @@ show_screen_tab:
     sub b
     ld b, a                 ; b stores how long a tab is
 show_screen_tab1:
-    ld a, '_'               ; show a tab
+    ld a, ' '               ; show a tab
     call print_a
     ld a, (current_col)
     inc a
@@ -845,6 +877,46 @@ skip_cols_end_tab0:
     inc hl                          ; increase doc pointer
     djnz skip_col
 skip_cols_done:
+    or 1                            ; return NZ
+    ret
+
+skip_spaces:
+    ; We are pointing to the doc in hl.
+    ; This skips along a line and stops when a non-space, non-tab is found
+    ; If a TAB is found we need to take that into account.
+    ; Returns Z if could not skip that number of cols, or NZ if all good.
+    ; Returns the new doc pointer in hl.
+    ; Returns the new cursor_x in c.
+    ld c, 0                         ; c = current col = 0
+skip_space:
+    ld a, (hl)
+    cp ' '
+    jr z, skip_spaces_end_tab0
+    cp TAB
+    jr nz, skip_spaces_done
+skip_tab:
+    ; If we are on a tab we need to swallow 1, 2 or 3 increments
+    ld a, c
+    and %00000011
+    ld d, a
+    ld a, 3
+    sub d                   ; for first char of tab, a = 3, 2nd a = 2, 3rd a = 1, 4th a = 0
+    jr z, skip_spaces_end_tab0
+    dec a
+    jr z, skip_spaces_end_tab1        ; max 2
+    dec a
+    jr z, skip_spaces_end_tab2        ; max 1
+skip_spaces_end_tab3:
+    inc c
+skip_spaces_end_tab2:
+    inc c
+skip_spaces_end_tab1:
+    inc c
+skip_spaces_end_tab0:
+    inc c                           ; increase col counter
+    inc hl                          ; increase doc pointer
+    jr skip_space
+skip_spaces_done:
     or 1                            ; return NZ
     ret
 
@@ -1007,6 +1079,8 @@ get_user_action:
     ret z
     cp ENTER
     ret z
+    cp TAB
+    ret z
     cp $18                              ; CTRL_X
     jr z, get_user_action_quit
     cp ESC                              ; ESC
@@ -1078,10 +1152,32 @@ db 'it! I have made it a really long line so that there is the option to scroll 
 db TAB,'But these lines',EOL
 db TAB,'are indented',EOL
 db TAB,'by one tab each!!!',EOL
+db EOL
 db ' ',TAB,'And this line goes "space", "tab"',EOL
 db '  ',TAB,'And this line goes "space", "space", "tab"',EOL
 db '   ',TAB,'And this line goes 3x"space" "tab"',EOL
 db '0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ',EOL
+db '1',EOL
+db '2',EOL
+db '3',EOL
+db '4',EOL
+db '5',EOL
+db '6',EOL
+db '7',EOL
+db '8',EOL
+db '9',EOL
+db 'ten!!!',EOL
+db '11',EOL
+db '12',EOL
+db '13 with some extra text',EOL
+db '14 with even more text',EOL
+db '15',EOL
+db '16',EOL
+db '17',EOL
+db 'eighteen is here',EOL
+db '19',EOL
+db '20',EOL
+db '21',EOL
 db 'The end.',END_OF_TEXT
 
 include "../cpm-fat/message.asm"
@@ -1125,6 +1221,8 @@ doc_end:
     dw 0
 doc_lines:
     dw 0
+need_to_redraw_screen:
+    db 0
 selection_start:  
     dw 0
 selection_end:  
