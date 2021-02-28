@@ -75,7 +75,9 @@ main_loop_get_key:
     or a
     jr z, main_loop_get_key
     cp BACKSPACE
-    jr z, backspace_pressed
+    jp z, backspace_pressed
+    cp USER_DELETE
+    jr z, delete_pressed
     cp ENTER
     jp z, insert_char
     cp 127
@@ -100,6 +102,70 @@ main_loop_get_key:
     jp z, cursor_page_down
     jp main_loop
 
+delete_pressed:
+    ; User has pressed forward "delete".
+    ; Not allowed if right at end of doc...
+    xor a
+    ld (need_to_redraw_screen), a
+    ld hl, (doc_pointer)
+    ld a, (hl)
+    cp END_OF_TEXT
+    jr z, main_loop
+
+    ; Did we just delete into the next line?
+    cp EOL
+    jr nz, normal_delete
+
+join_with_next_line:
+    ; Deleting into the next line.
+    ; If this would result in a line > 255 long, don't allow it.
+    ld hl, (doc_pointer)
+    call skip_to_start_of_line
+    call get_line_length
+    ld d, a
+    call skip_to_start_of_next_line
+    call get_line_length
+    add a, d
+    jp c, main_loop
+    ; document shrinks by one line
+    ld hl, (doc_lines)
+    dec hl
+    ld (doc_lines), hl
+
+    ; Force screen redraw later....
+    ld a, 1
+    ld (need_to_redraw_screen), a
+
+normal_delete:
+    ; Move everything in memory from current pos down by one.
+    ld hl, (doc_end)
+    ld de, (doc_pointer)
+    or a                                ; clear carry
+    sbc hl, de                          
+    ld b, h
+    ld c, l                             ; BC = size of doc beyond this point
+
+    ; Shorten the doc by one byte
+    ld hl, (doc_end)
+    dec hl
+    ld (doc_end), hl
+
+    ; Copy down the remaining doc by 1 byte
+    ld hl, (doc_pointer)
+    ld e, l
+    ld d, h
+    inc hl
+    ;inc bc do we need this???
+    ldir                                
+
+    ld a, (need_to_redraw_screen)
+    or a
+    jp nz, need_to_redraw
+
+    ; Redraw the current row
+    call show_current_line
+    jp main_loop
+
 backspace_pressed:
     ; User has pressed "< BACKSPACE"
     ; Not allowed if right at start of doc...
@@ -109,14 +175,24 @@ backspace_pressed:
     dec hl
     ld a, (hl)
     cp START_OF_TEXT
-    jr z, main_loop
+    jp z, main_loop
 
     ; Did we just backspace into the previous line?
     cp EOL
-    jr nz, normal_delete
+    jr nz, normal_backspace
 
 join_with_previous_line:
-    ; Deleting into the previous line
+    ; Deleting into the previous line.
+    ; If this would result in a line > 255 long, don't allow it.
+    ld hl, (doc_pointer)
+    call get_line_length
+    ld d, a
+    dec hl
+    call skip_to_start_of_line
+    call get_line_length
+    add a, d
+    jp c, main_loop
+join_with_previous_line1:
     ; document shrinks by one line
     ld hl, (doc_lines)
     dec hl
@@ -141,7 +217,7 @@ join_with_previous_line:
     ld (need_to_redraw_screen), a
     jr backspace_pressed1
 
-normal_delete:
+normal_backspace:
     ; Work out where the cursor will be after this deletion
     call skip_to_start_of_line
     ld a, (cursor_x)
@@ -177,13 +253,13 @@ backspace_pressed1:
 
     ld a, (need_to_redraw_screen)
     or a
-    jr nz, backspace_redraw
+    jr nz, need_to_redraw
 
     ; Redraw the current row
     call show_current_line
     jp main_loop
 
-backspace_redraw:
+need_to_redraw:
     call show_screen
     jp main_loop    
 
@@ -1105,6 +1181,8 @@ get_user_action:
     jp z, get_user_action_page_up
     cp $36
     jp z, get_user_action_page_down
+    cp $33
+    jp z, get_user_action_delete
 get_user_action_none:
     ld a, 0
     ret
@@ -1140,6 +1218,12 @@ get_user_action_page_down:
     cp $7e
     jr nz, get_user_action_none
     ld a, USER_CURSOR_PGDN
+    ret
+get_user_action_delete:
+    call get_key
+    cp $7e
+    jr nz, get_user_action_none
+    ld a, USER_DELETE
     ret
         
 test_stuff:
@@ -1204,6 +1288,7 @@ USER_CURSOR_HOME equ 132
 USER_CURSOR_END equ 133
 USER_CURSOR_PGUP equ 134
 USER_CURSOR_PGDN equ 135
+USER_DELETE equ 136
 USER_QUIT equ 255
     
 ; variables
