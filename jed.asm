@@ -18,7 +18,8 @@
 ; There is also a doc_pointer that points to the current char that the cursor is on.
 ;
 ; The current view of the document is displayed on the screen in
-; an area VIEW_WIDTH x VIEW_HEIGHT
+; an area VIEW_WIDTH x VIEW_HEIGHT.
+;
 
     org $0100
 
@@ -58,10 +59,7 @@
     add hl, de              ; hl points to BIOS_con_out
     ld (BIOS_CON_OUT), hl
 
-    ; Put some test stuff into memory
-    call test_fill
-
-    ;jp key_reader_loop
+    call load_file
 
     call show_screen
 main_loop:
@@ -83,7 +81,7 @@ main_loop_get_key:
     cp 127
     jp c, insert_char
     cp USER_QUIT
-    jp z, exit
+    jp z, save_and_exit
     cp USER_CURSOR_RIGHT
     jp z, cursor_right
     cp USER_CURSOR_LEFT
@@ -431,7 +429,12 @@ show_current_line_tab1:
     ret
 
 out_of_memory:
+    ld de, out_of_memory_message
+    ld c, BDOS_Print_String
+    call BDOS
     jp exit
+out_of_memory_message:
+    db 'Out of memory!',13,10,'$'
 
 show_screen_if_scrolled:
     ; If the cursor is still on the screen then do nothing.
@@ -497,15 +500,8 @@ show_screen_if_scrolled3:
 show_screen_if_scrolled4:
     ld a, b
     or a
-    jr z, didnt_go_off
-    push af
+    ret z
     call show_screen
-    pop af
-    call show_went_off_direction
-    ret
-didnt_go_off:
-    ld a, '-'
-    call show_went_off_direction
     ret
 
 cursor_down:
@@ -749,6 +745,8 @@ cursor_page_up_ok:
     ld (doc_pointer), hl
     jp main_loop
 
+save_and_exit:
+    call save_file
 exit:
     call cls
     jp 0
@@ -1273,6 +1271,7 @@ TAB_WIDTH equ 4
 END_OF_TEXT equ 26
 START_OF_TEXT equ 2
 EOL equ 13
+LF equ 10
 TAB equ 9
 ESC equ 27
 BDOS equ 5
@@ -1290,6 +1289,19 @@ USER_CURSOR_PGUP equ 134
 USER_CURSOR_PGDN equ 135
 USER_DELETE equ 136
 USER_QUIT equ 255
+
+FCB equ 005CH   ; We use the standard default FCB
+DMA equ 0080H   ; Standard DMA area
+BDOS_Open_File  equ 15       ; 0F
+BDOS_Close_File equ 16       ; 10
+BDOS_Read_Sequential equ 20  ; 14
+BDOS_Print_String equ 9      ; 09
+BDOS_Set_DMA_Address equ 26  ; 1A
+BDOS_Delete_File equ 19      ; 13
+BDOS_Rename_File equ 23      ; 17
+BDOS_Write_Sequential equ 21 ; 15
+BDOS_Make_File equ 22        ; 16
+
     
 ; variables
 cursor_x:
@@ -1322,7 +1334,18 @@ doc_pointer:
     dw 0
 ram_end:
     dw 0
-
+file_extension:
+    db '---'
+temp_file_extension:
+    db 'TMP'
+read_pointer:
+    dw 0
+write_pointer:
+    dw 0
+hang_over:
+    db 0
+all_done:
+    db 0
 stack:
     ds 31
 stacktop:
@@ -1331,15 +1354,290 @@ stacktop:
 ;;;;;;;;;;;;;;;;;;;;;
 ; debug routines
 
-test_fill:
+save_file:
+    call save_as_temp_file
+    cp 255
+    jr z, failed_to_save
+    call erase_original_file
+    cp 255
+    jr z, failed_to_save
+    call rename_temp_to_original_file
+    ret
+
+rename_temp_to_original_file:
+    ; Copy the filename to FCB+16
+    ld de, FCB+16
+    ld hl, FCB
+    ld bc, 16
+    ldir
+
+    ; Set temp file extension for "from" file
+    ld de, FCB+9
+    ld hl, temp_file_extension
+    ld bc, 3
+    ldir
+
+    ld de, FCB
+    ld c, BDOS_Rename_File
+    call BDOS
+    ret
+
+erase_original_file:
+    ; restore the filename extension, then erase that file
+    ld de, FCB+9
+    ld hl, file_extension
+    ld bc, 3
+    ldir
+
+    ld de, FCB
+    ld c, BDOS_Delete_File
+    call BDOS
+    ret
+
+failed_to_save:
+    ld de, failed_to_save_message
+    ld c, BDOS_Print_String
+    call BDOS
+    ret
+failed_to_save_message:
+    db 'ERROR saving file!',13,10,'$'
+
+save_as_temp_file:
+    ; This saves the current doc as a temp file.
+    ; Returns 0 for success, 255 for failure.
+
+    ; Copy the file extension to a variable
+    ld hl, FCB+9
+    ld de, file_extension
+    ld bc, 3
+    ldir
+
+    call clear_remainder_of_fcb
+
+    ; Copy the temp file extension
+    ld hl, temp_file_extension
+    ld de, FCB+9
+    ld bc, 3
+    ldir
+
+    ; Erase the temp file, if it exists
+    ld de, FCB
+    ld c, BDOS_Delete_File
+    call BDOS
+
+    call clear_remainder_of_fcb
+
+    ; Create the temp file
+    ld de, FCB
+    ld c, BDOS_Make_File
+    call BDOS
+    cp 0
+    ret nz
+
+    ld de, DMA
+    ld c, BDOS_Set_DMA_Address
+    call BDOS
+
+    ; Work through the file one sector at a time, saving it.
+    ; We need to keep track of:
+    ; The place in memory we are reading from: "read_pointer". We are done if this reaches End_of_text.
+    ; The place in the DMA area we are writing to: "write_pointer".
+    ; How many bytes are left in the DMA area: "b". If this reaches 0 we need to write out the sector.
+    ; To complicate matters further, if we hit a CR we need to add a LF. This may hang over the end of a sector. 
+    ld hl, (doc_start)
+    ld (read_pointer), hl
+
+    xor a
+    ld (hang_over), a
+    ld (all_done), a
+
+save_main_loop
+    ld hl, DMA
+    ld (write_pointer), hl
+    ld b, 128                       ; Counter for bytes written to DMA area
+
+    ld a, (hang_over)
+    cp 0
+    jr z, save_as_temp_file_loop
+
+    ld a, LF 
+    call write_a
+    dec b
+save_as_temp_file_loop:
+    call read_a
+    cp END_OF_TEXT
+    jr z, finish_this_sector
+    cp EOL
+    jr nz, save_not_eol
+    ; For eol send 2 chars
+    ld a,EOL
+    ld (hang_over), a
+    call write_a
+    dec b
+    jr z, sector_complete
+    xor a
+    ld (hang_over), a
+    ld a, LF
+save_not_eol:
+    call write_a
+    djnz save_as_temp_file_loop
+    jr sector_complete
+finish_this_sector:
+    ld c, a
+    ld a, 1
+    ld (all_done), a
+    ld a, c
+    call write_a
+    djnz finish_this_sector
+sector_complete:
+    ; Now write the sector out to disk
+    ld de, FCB
+    ld c, BDOS_Write_Sequential
+    call BDOS
+
+    ; Any more to do?
+    ld a, (all_done)
+    cp 0
+    jr z, save_main_loop
+
+    ; Close temp file
+    ld c, BDOS_Close_File
+    ld de, FCB
+    call BDOS
+    ret
+
+write_a:
+    ld hl, (write_pointer)
+    ld (hl), a
+    inc hl
+    ld (write_pointer), hl
+    ret
+
+read_a:
+    ld hl, (read_pointer)
+    ld a, (hl)
+    inc hl
+    ld (read_pointer), hl
+    ret
+
+clear_remainder_of_fcb:
+    ; This puts zeros in the rest of a FCB, for +12 to +35
+    ld hl, FCB+12
+    ld b, 24
+clear_remainder_of_fcb1:
+    ld (hl), 0
+    inc hl
+    djnz clear_remainder_of_fcb1
+    ret
+
+load_file:
+    call clear_selection
+    call clear_doc_lines
+    ; Test if the file can be opened
+    ld c, BDOS_Open_File
+    ld de, FCB
+    call BDOS
+    dec a
+    jr z, could_not_open_file
+
+    ld hl, (doc_start)
+    ld (doc_pointer), hl
+    ld (doc_end), hl
+
+    ld hl, 0
+    ld (doc_lines), hl
+
+    ld de, DMA                      ; Use the standard DMA area
+    ld c, BDOS_Set_DMA_Address
+    call BDOS
+
+load_file_loop:
+    ; Read in a sector at a time until finished, or out of memory.
+    ; The sector gets read into the standard DMA area.
+    ld de, FCB
+    ld c, BDOS_Read_Sequential
+    call BDOS
+    cp 0
+    jr nz, load_file_done
+
+    ; Now copy 128 bytes of data from the DMA area into our internal storage for it.
+    ; Any CR/LF combos are relaced by a single CR.
+    ld de, (doc_end)
+    ld hl, DMA
+    ld b, 128
+load_file_loop1:
+    ld a, (hl)
+    cp TAB
+    jr z, load_file_loop_good_char
+    cp EOL
+    jr z, load_file_loop_eol
+    cp 32
+    jr c, load_file_loop_bad_char
+    cp 127
+    jr nc, load_file_loop_bad_char
+load_file_loop_good_char:    
+    ld (de), a
+    inc de
+load_file_loop_bad_char:    
+    inc hl
+    djnz load_file_loop1
+
+    ; Increase the doc end pointer
+    ld (doc_end), de
+
+    ; If doc end pointer is too near top of memory then we are out of mem.
+    ld hl, (ram_end)
+    or a                                ; clear carry
+    sbc hl, de
+    ld a, h
+    cp 0
+    jr nz, load_file_loop
+    ld a, l
+    cp 129
+    jp nc, load_file_loop
+    jp out_of_memory
+
+load_file_loop_eol:
+    push hl
+    ld hl, (doc_lines)
+    inc hl
+    ld (doc_lines), hl
+    pop hl
+    jr load_file_loop_good_char
+
+load_file_done:
+    ld de, FCB
+    ld c, BDOS_Close_File
+    call BDOS
+
+    ld hl, (doc_end)
+    ld (hl), END_OF_TEXT
+    ret
+
+could_not_open_file:
+    ld de, could_not_open_file_message
+    ld c, BDOS_Print_String
+    call BDOS
+    ret
+could_not_open_file_message:
+    db 'Could not open that file!',13,10,'$'
+
+clear_selection:
     ; turn off any selection
     ld hl, $ffff
     ld (selection_start), hl
     ld (selection_end), hl
+    ret
 
+clear_doc_lines:
     ; clear doc_lines
     ld hl, 0
     ld (doc_lines), hl
+    ret
+
+test_fill:
+    call clear_selection
+    call clear_doc_lines
 
     ; Fill ram with some test stuff
     ld de, (doc_start)
@@ -1432,25 +1730,67 @@ show_tab:
     call print_a
     ret
 
-show_went_off_direction:
-    ; Show at the bottom of the screen an indicator "a"
-    push af
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, 25
-    call print_a_as_decimal
-    ld a, ';'
-    call print_a
-    ld a, 5
-    call print_a_as_decimal
-    ld a, 'H'
-    call print_a
-    pop af
-    call print_a
-    ret
+; show_fcb_message:
+;     db 'FCB: $'
+; show_fcb:
+;     ; Shows the FCB on screen.
+;     ld de, show_fcb_message
+;     ld c, BDOS_Print_String
+;     call BDOS
 
+;     ld de, FCB
+
+;     ; Show Drive Letter
+;     ld a, (de)
+;     inc de
+;     cp 0
+;     jr z, show_fcb1
+;     add a, 'A'-1
+;     call print_a
+;     ld a, ':'
+;     call print_a
+;     ld a, ' '
+;     call print_a
+;     jr show_fcb2
+
+; show_fcb1:
+;     ld a, 'd'
+;     call print_a
+;     ld a, 'f'
+;     call print_a
+;     ld a, 'l'
+;     call print_a
+;     ld a, 't'
+;     call print_a
+;     ld a, ':'
+;     call print_a
+;     ld a, ' '
+;     call print_a
+; show_fcb2:
+;     ; Show filename
+;     ld b, 8
+; show_fcb3:
+;     ld a, (de)
+;     inc de
+;     call print_a
+;     djnz show_fcb3
+; show_fcb4:
+;     ; Show ext
+;     ld a, '.'
+;     call print_a
+;     ld b, 3
+; show_fcb5:
+;     ld a, (de)
+;     and %01111111
+;     inc de
+;     call print_a
+;     djnz show_fcb5
+; show_fcb_end:
+;     ld a, 13
+;     call print_a
+;     ld a, 10
+;     call print_a
+;     ret
 
 
 ; key_reader_loop:
