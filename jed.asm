@@ -59,14 +59,22 @@
     add hl, de              ; hl points to BIOS_con_out
     ld (BIOS_CON_OUT), hl
 
-    call load_file
+    ; Clear the doc area
+    call clear_selection
+    call clear_doc_lines
+    ld hl, (doc_start)
+    ld (doc_pointer), hl
+    ld (doc_end), hl
+
+    call was_filename_provided
+    call z, load_file
 
     call show_screen
 main_loop:
     call show_screen_if_scrolled
     call show_cursor_coords
 main_loop_no_scroll_change:
-    call show_current_char
+    ;call show_current_char
     call set_cursor_position
 main_loop_get_key:
     call get_user_action
@@ -99,6 +107,14 @@ main_loop_get_key:
     cp USER_CURSOR_PGDN
     jp z, cursor_page_down
     jp main_loop
+
+was_filename_provided:
+    ; Returns Z if a filename was provided by CP/M in the FCB
+    ld hl, FCB+1
+    ld a, (hl)
+    cp ' '
+    jp nz, return_Z
+    jp return_NZ
 
 delete_pressed:
     ; User has pressed forward "delete".
@@ -749,10 +765,127 @@ cursor_page_up_ok:
     jp main_loop
 
 save_and_exit:
+    ; If no filename to save to, ask for one
+    call was_filename_provided
+    jr z, save_and_exit1
+
+    call nz, ask_for_filename
+
+    ; Only save if a filename was provided
+    call was_filename_provided
+    jr nz, exit
+save_and_exit1:
     call save_file
 exit:
     call cls
     jp 0
+
+save_as_message:
+    db 'If you want to save, enter a filename.',13,10
+    db 'If you don''t want to save, just press ENTER.',13,10,'$'
+ask_for_filename:
+    ; Clear screen, ask for filename, enter one.
+    ; Check it is nnnnnnnn.eee
+    ; If not, ask again.
+    ; If they don't want to save they can press ENTER on a blank one.
+    ; Return it in the FCB.
+
+    ; Clear the FCB
+    ld hl, FCB
+    ld (hl), 0
+    inc hl
+    ld de, FCB+2
+    ld (hl), ' '
+    ld bc, 10
+    ldir
+
+    call clear_remainder_of_fcb
+
+    call cls
+    
+    ld de, save_as_message
+    ld c, BDOS_Print_String
+    call BDOS
+
+    ; Set up a buffer of max 13 chars, and fill with zeros
+    ld hl, filename_buffer
+    ld de, filename_buffer+1
+    ld (hl), 0
+    ld bc, 13
+    ldir
+
+    ld hl, filename_buffer
+    ld (hl), 12
+    ex de, hl
+    ld c, BDOS_Read_Console_Buffer
+    call BDOS
+
+    ; Check filename buffer is valid
+    ld hl, filename_buffer+1
+    ld a, (hl)                          ; Length of filename
+    cp 0
+    ret z                               ; Exit if they just hit ENTER
+    inc hl
+
+    ld b, 8
+    ld de, FCB+1
+    call copy_filename_chars
+    ld a, (hl)
+    cp '.'
+    ret nz                              ; Give up if no "."
+    inc hl
+    ld b, 3
+    ld de, FCB+9
+    call copy_filename_chars
+    ret
+
+copy_filename_chars:
+    ; Pass in destination DE.
+    ; Source in HL.
+    ; Max number of chars to copy in B.
+    ; Copies from HL to DE exactly B chars.
+    ; If we hit an invalid one, such as NULL or "." or " " then we stop copying.
+    ; Return updated HL so the next call to this function can carry on where this one left off.
+    ld a, (hl)
+    call is_char_valid
+    ret nz
+    call make_uppercase
+    inc hl
+    ld (de), a
+    inc de
+    djnz copy_filename_chars
+    ret
+
+make_uppercase:
+    ; Makes a letter in A into uppercase
+    cp 'a'
+    ret c
+    cp 'z'+1
+    ret nc 
+    and %11011111
+    ret
+
+is_char_valid:
+    ; Checks if A is a valid filename character.
+    cp 33
+    jr c, return_NZ
+    cp '*'
+    jr z, return_NZ
+    cp '?'
+    jr z, return_NZ
+    cp '.'
+    jr z, return_NZ
+    cp 127
+    jr nc, return_NZ
+    jr return_Z
+
+return_NZ:
+    or 1                                ; clear zero flag
+    ret    
+
+return_Z:
+    cp a                                ; Set Z
+    ret
 
 set_cursor_position:
     ; Put the cursor on the screen at the correct position.
@@ -1295,15 +1428,17 @@ USER_QUIT equ 255
 
 FCB equ 005CH   ; We use the standard default FCB
 DMA equ 0080H   ; Standard DMA area
-BDOS_Open_File  equ 15       ; 0F
-BDOS_Close_File equ 16       ; 10
-BDOS_Read_Sequential equ 20  ; 14
-BDOS_Print_String equ 9      ; 09
-BDOS_Set_DMA_Address equ 26  ; 1A
-BDOS_Delete_File equ 19      ; 13
-BDOS_Rename_File equ 23      ; 17
-BDOS_Write_Sequential equ 21 ; 15
-BDOS_Make_File equ 22        ; 16
+BDOS_Open_File  equ 15          ; 0F
+BDOS_Close_File equ 16          ; 10
+BDOS_Read_Sequential equ 20     ; 14
+BDOS_Print_String equ 9         ; 09
+BDOS_Set_DMA_Address equ 26     ; 1A
+BDOS_Delete_File equ 19         ; 13
+BDOS_Rename_File equ 23         ; 17
+BDOS_Write_Sequential equ 21    ; 15
+BDOS_Make_File equ 22           ; 16
+BDOS_Read_Console_Buffer equ 10 ; 0A
+BDOS_Search_for_First equ 17    ; 11
 
     
 ; variables
@@ -1349,6 +1484,8 @@ hang_over:
     db 0
 all_done:
     db 0
+filename_buffer:
+    ds 15
 stack:
     ds 31
 stacktop:
@@ -1362,8 +1499,6 @@ save_file:
     cp 255
     jr z, failed_to_save
     call erase_original_file
-    cp 255
-    jr z, failed_to_save
     call rename_temp_to_original_file
     ret
 
@@ -1534,21 +1669,12 @@ clear_remainder_of_fcb1:
     ret
 
 load_file:
-    call clear_selection
-    call clear_doc_lines
-    ; Test if the file can be opened
+    ; Test if the file can be opened for reading
     ld c, BDOS_Open_File
     ld de, FCB
     call BDOS
-    dec a
+    inc a
     jr z, could_not_open_file
-
-    ld hl, (doc_start)
-    ld (doc_pointer), hl
-    ld (doc_end), hl
-
-    ld hl, 0
-    ld (doc_lines), hl
 
     ld de, DMA                      ; Use the standard DMA area
     ld c, BDOS_Set_DMA_Address
@@ -1621,9 +1747,9 @@ could_not_open_file:
     ld de, could_not_open_file_message
     ld c, BDOS_Print_String
     call BDOS
-    ret
+    jp 0
 could_not_open_file_message:
-    db 'Could not open that file!',13,10,'$'
+    db 'File not found.',13,10,'$'
 
 clear_selection:
     ; turn off any selection
@@ -1682,56 +1808,56 @@ show_cursor_coords:
     call print_a
     ret    
 
-show_current_char:
-    ; Show at the bottom of the screen what the cursor is pointing to
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, 25
-    call print_a_as_decimal
-    ld a, ';'
-    call print_a
-    ld a, 1
-    call print_a_as_decimal
-    ld a, 'H'
-    call print_a
-    ld hl, (doc_pointer)
-    ld a, (hl)
-    cp EOL
-    jr z, show_eol
-    cp END_OF_TEXT
-    jr z, show_eot
-    cp TAB
-    jr z, show_tab
-    call print_a
-    ld a, ' '
-    call print_a
-    ld a, ' '
-    call print_a
-    ret
-show_eol:
-    ld a, 'C'
-    call print_a
-    ld a, 'R'
-    call print_a
-    ret
-show_eot:
-    ld a, 'E'
-    call print_a
-    ld a, 'N'
-    call print_a
-    ld a, 'D'
-    call print_a
-    ret
-show_tab:
-    ld a, 'T'
-    call print_a
-    ld a, 'A'
-    call print_a
-    ld a, 'B'
-    call print_a
-    ret
+; show_current_char:
+;     ; Show at the bottom of the screen what the cursor is pointing to
+;     ld a, ESC
+;     call print_a
+;     ld a, '['
+;     call print_a
+;     ld a, 25
+;     call print_a_as_decimal
+;     ld a, ';'
+;     call print_a
+;     ld a, 1
+;     call print_a_as_decimal
+;     ld a, 'H'
+;     call print_a
+;     ld hl, (doc_pointer)
+;     ld a, (hl)
+;     cp EOL
+;     jr z, show_eol
+;     cp END_OF_TEXT
+;     jr z, show_eot
+;     cp TAB
+;     jr z, show_tab
+;     call print_a
+;     ld a, ' '
+;     call print_a
+;     ld a, ' '
+;     call print_a
+;     ret
+; show_eol:
+;     ld a, 'C'
+;     call print_a
+;     ld a, 'R'
+;     call print_a
+;     ret
+; show_eot:
+;     ld a, 'E'
+;     call print_a
+;     ld a, 'N'
+;     call print_a
+;     ld a, 'D'
+;     call print_a
+;     ret
+; show_tab:
+;     ld a, 'T'
+;     call print_a
+;     ld a, 'A'
+;     call print_a
+;     ld a, 'B'
+;     call print_a
+;     ret
 
 ; show_fcb_message:
 ;     db 'FCB: $'
