@@ -361,6 +361,7 @@ enter_pressed:
 show_current_line:
     ; Show the current line again because it has changed
     ; Move screen draw position to start of current line
+    call hide_cursor
     ld hl, (cursor_y)
     ld de, (screen_top)
     or a
@@ -400,13 +401,13 @@ show_current_line1:
     ld (current_col), a
     inc hl
     djnz show_current_line1
-    ret
+    jr show_current_line_done
 show_current_line2:
     ; Fill remainer of row with spaces
     ld a, ' '
     call print_a
     djnz show_current_line2
-    ret
+    jr show_current_line_done
 show_current_line_tab:
     ld c, b
     ld a, (current_col)
@@ -426,6 +427,8 @@ show_current_line_tab1:
     inc hl
     ld b, c
     djnz show_current_line1
+show_current_line_done:
+    call show_cursor
     ret
 
 out_of_memory:
