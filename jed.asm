@@ -69,6 +69,8 @@
     call was_filename_provided
     call z, load_file
 
+    ;;;;;;;;;;;jp key_reader_loop
+
     call show_screen
 main_loop:
     call show_screen_if_scrolled
@@ -347,7 +349,7 @@ tab_pressed:
 tab_pressed1:
     inc a
     inc b
-    and %00000011
+    and TAB_MASK
     or a
     jr nz, tab_pressed1
     ld a, b
@@ -427,7 +429,7 @@ show_current_line2:
 show_current_line_tab:
     ld c, b
     ld a, (current_col)
-    and %00000011
+    and TAB_MASK
     ld b, a
     ld a, TAB_WIDTH
     sub b
@@ -634,7 +636,7 @@ cursor_right_wrap:
     jp main_loop
 cursor_right_tab:
     ld a, (cursor_x)                ; For TAB, we need to end up on a mod-4 boundary
-    and %00000011
+    and TAB_MASK
     jp z, main_loop
     ld a, (cursor_x)
     inc a
@@ -1024,7 +1026,7 @@ show_screen_done:
 show_screen_tab:
     push bc
     ld a, (current_col)
-    and %00000011
+    and TAB_MASK
     ld b, a
     ld a, TAB_WIDTH
     sub b
@@ -1058,31 +1060,28 @@ skip_col:
     cp EOL 
     ret z                           ; exit with Z if found end of row
     cp TAB
-    jr nz, skip_cols_end_tab0
-    ; If we are on a tab we need to swallow 1, 2 or 3 increments
+    jr nz, skip_cols_not_tab
+    ; If we are on a tab we need to swallow 1-7 increments
     ld a, c
-    and %00000011
+    and TAB_MASK
     ld d, a
-    ld a, 3
-    sub d                   ; for first char of tab, a = 3, 2nd a = 2, 3rd a = 1, 4th a = 0
-    jr z, skip_cols_end_tab0
-    dec b
-    jr z, skip_cols_done
+    ld a, TAB_WIDTH 
     dec a
-    jr z, skip_cols_end_tab1        ; max 2
-    dec b
-    jr z, skip_cols_done
-    dec a
-    jr z, skip_cols_end_tab2        ; max 1
-    dec b
-    jr z, skip_cols_done
-skip_cols_end_tab3:
-    inc c
-skip_cols_end_tab2:
-    inc c
-skip_cols_end_tab1:
-    inc c
-skip_cols_end_tab0:
+    sub d                   ; for first char of tab, a = 7, 2nd a = 6, 3rd a = 5, last a = 0
+    ; if b < a we aren't going to reach the end of the tab, so stay here
+    cp b
+    jr nc, skip_cols_done
+    ; take a off of b
+    ld d, a
+    ld a, b
+    sub d
+    ld b, a
+
+    ; add a onto c, so we skip that many tabs
+    ld a, c
+    add a, d
+    ld c, a
+skip_cols_not_tab
     inc c                           ; increase col counter
     inc hl                          ; increase doc pointer
     djnz skip_col
@@ -1101,28 +1100,21 @@ skip_spaces:
 skip_space:
     ld a, (hl)
     cp ' '
-    jr z, skip_spaces_end_tab0
+    jr z, skip_spaces_not_tab
     cp TAB
     jr nz, skip_spaces_done
 skip_tab:
-    ; If we are on a tab we need to swallow 1, 2 or 3 increments
+    ; If we are on a tab we need to swallow 1-7 increments
     ld a, c
-    and %00000011
+    and TAB_MASK
     ld d, a
-    ld a, 3
-    sub d                   ; for first char of tab, a = 3, 2nd a = 2, 3rd a = 1, 4th a = 0
-    jr z, skip_spaces_end_tab0
+    ld a, TAB_WIDTH
     dec a
-    jr z, skip_spaces_end_tab1        ; max 2
-    dec a
-    jr z, skip_spaces_end_tab2        ; max 1
-skip_spaces_end_tab3:
-    inc c
-skip_spaces_end_tab2:
-    inc c
-skip_spaces_end_tab1:
-    inc c
-skip_spaces_end_tab0:
+    sub d                   ; for first char of tab, a = 7, 2nd a = 6, 3rd a = 5, last a = 0
+
+    add a, c
+    ld c, a
+skip_spaces_not_tab:
     inc c                           ; increase col counter
     inc hl                          ; increase doc pointer
     jr skip_space
@@ -1403,7 +1395,8 @@ include "../cpm-fat/message.asm"
 ; CONSTANTS
 VIEW_WIDTH equ 80
 VIEW_HEIGHT equ 20
-TAB_WIDTH equ 4
+TAB_WIDTH equ 8
+TAB_MASK equ %00000111
 END_OF_TEXT equ 26
 START_OF_TEXT equ 2
 EOL equ 13
@@ -1922,14 +1915,14 @@ show_cursor_coords:
 ;     ret
 
 
-; key_reader_loop:
-;     call get_key
-;     cp 'q'
-;     jp z, exit
-;     call show_a_as_hex
-;     ld a, ' '
-;     call print_a
-;     jr key_reader_loop
+key_reader_loop:
+    call get_key
+    cp 'q'
+    jp z, 0
+    call show_a_as_hex
+    ld a, ' '
+    call print_a
+    jr key_reader_loop
 
 ;     ld b, 50
 ; number_loop:
