@@ -23,6 +23,32 @@
 
     org $0100
 
+    jr main_program
+
+    ; This is the key-definition table, that ties keystrokes to user actions.
+    ; Each row shows the values that come from the keyboard, which can 
+    ; be up to 4 hex values, followed by $FFs, followed by the action itself.
+    ; For example, on my keyboard, pressing Cursor-Up gives 1B 5B 41.
+    ; You can change the key defs by editing here and re-assembling.
+    ; Or you can use the JEDKEY.COM program to redefine the keys. (When I get round to making JEDKEY!!!!!)
+    ; JEDKEY just directly changes these bytes in JED.COM.
+keytable:
+    db $0D, $FF, $FF, $FF, $FF, ENTER
+    db $09, $FF, $FF, $FF, $FF, TAB
+    db $7F, $FF, $FF, $FF, $FF, BACKSPACE
+    db $1B, $5B, $33, $7E, $FF, USER_DELETE
+    db $1B, $5B, $41, $FF, $FF, USER_CURSOR_UP
+    db $1B, $5B, $42, $FF, $FF, USER_CURSOR_DOWN
+    db $1B, $5B, $44, $FF, $FF, USER_CURSOR_LEFT
+    db $1B, $5B, $43, $FF, $FF, USER_CURSOR_RIGHT
+    db $1B, $5B, $48, $FF, $FF, USER_CURSOR_HOME
+    db $1B, $5B, $46, $FF, $FF, USER_CURSOR_END
+    db $1B, $5B, $35, $7E, $FF, USER_CURSOR_PGUP
+    db $1B, $5B, $36, $7E, $FF, USER_CURSOR_PGDN
+    db $18, $FF, $FF, $FF, $FF, USER_QUIT
+    db $FF
+
+main_program:
     ; Load a file into ram
     ; We need to know the start and end of the ram space
     ; Start is the end of this code+1
@@ -65,6 +91,8 @@
     ld hl, (doc_start)
     ld (doc_pointer), hl
     ld (doc_end), hl
+
+    call clear_keybuff
 
     call was_filename_provided
     call z, load_file
@@ -1192,12 +1220,13 @@ get_line_length_done:
     ret
 
 get_key:
-    ; Wait for a key
+    ; Wait for a key. Return it in A
     ld c, BDOS_CONSOLE_INPUT
     ld e, $FF
     call BDOS
     cp 0
     jr z, get_key
+    ld c, a
     ret
 
 JP_HL:
@@ -1268,127 +1297,129 @@ inc_doc_lines:
     pop hl
     ret
 
+clear_keybuff:
+    ld hl, keybuff
+    ld (keypointer), hl
+    ld a, $FF
+    ld (keybuff), a
+    ld (keybuff+1), a
+    ld (keybuff+2), a
+    ld (keybuff+3), a
+    ld (keybuff+4), a
+    xor a
+    ld (keycounter), a
+    ret
+
 get_user_action:
     ; Read a key from the keyboard and decide on what it means.
     ; It can be:
     ; A normal key press. If so return the ASCII char.
     ; A cursor key. If so return one of the ACTION values.
     ; Another special key like delete or enter. Return the ACTION value.
-    call get_key
+    ; Return 0 if no user_action.
+    ;
+    ; The key definitions are stored like this:
+    ; DELETE = 05, 23, 47, 90, FF, ACTION
+    ; If they are not 4 keys long they are padded with FFs:
+    ; CURSOR_UP = 12, 65, FF, FF, FF, ACTION
+    ; ENTER = 13, FF, FF, FF, FF, ACTION
+    ; The ACTION is the number of the desired action, e.g. CURSOR_UP = 128
+    ; When you press a key, you may get 1 to 4 actual keys from it.
+    ; These are compared to each definition in the table, in turn.
+    ; If more than one match then we need to wait for another key.
+    ; Some keys are not configurable. These are all single key
+    ; presses, and are all >= 32.
+    ; The keys go into a buffer, called keybuff.
+    ; It's 4 spaces long. It has a pointer called keypointer, and a counter called keycounter.
+    ; When we get a good key, we clear the buffer.
+
+    ; Let's just show the keybuff quickly
+;     ld a, ESC
+;     call print_a
+;     ld a, '['
+;     call print_a
+;     ld a, 25
+;     call print_a_as_decimal
+;     ld a, ';'
+;     call print_a
+;     ld a, 30
+;     call print_a_as_decimal
+;     ld a, 'H'
+;     call print_a
+
+;     ld hl, keybuff
+;     ld b, 5
+; show_keybuff_loop:
+;     ld a, (hl)
+;     push hl
+;     push bc
+;     call show_a_as_hex
+;     pop bc
+;     pop hl
+;     ld a, ' '
+;     call print_a
+;     inc hl
+;     djnz show_keybuff_loop
+
+
+
+    call get_key                        ; c = key
+    ld a, (keycounter)
+    or a                                ; Are we at the start of the keybuff?
+    jr nz, get_user_action1
+    ld a, c
     cp ' '
     ret nc                              ; Ordinary key press
-    cp BACKSPACE
-    ret z
-    cp ENTER
-    ret z
-    cp TAB
-    ret z
-    cp $18                              ; CTRL_X
-    jr z, get_user_action_quit
-    cp ESC                              ; ESC
-    jr nz, get_user_action_none
-    call get_key
-    cp '['                              ; '['
-    jp nz, get_user_action_none
-    call get_key
-    cp $41                              ; Cursor UP
-    jp z, get_user_action_up
-    cp $42                              ; Cursor down
-    jp z, get_user_action_down
-    cp $43                              ; Cursor right
-    jp z, get_user_action_right
-    cp $44                              ; Cursor left
-    jp z, get_user_action_left
-    cp $48                              ; Cursor home
-    jp z, get_user_action_home
-    cp $46                              ; Cursor end
-    jp z, get_user_action_end
-    cp $35
-    jp z, get_user_action_page_up
-    cp $36
-    jp z, get_user_action_page_down
-    cp $33
-    jp z, get_user_action_delete
-get_user_action_none:
-    ld a, 0
+get_user_action1:
+    ; Have we read a 5th key? If so something is wrong and need to start again.
+    ld a, (keycounter)
+    cp 4
+    jr c, get_user_action2
+    call clear_keybuff
+    jp get_user_action4
+get_user_action2:
+    ; Is it one of the programmable keys?
+    ld hl, (keypointer)                 ; By now hl points to the appropriate place in keybuff
+    ld a, c
+    ld (hl), a                          ; Store the key in the buffer
+    inc hl                              ; Increase keypointer
+    ld (keypointer), hl
+    ld a, (keycounter)
+    inc a
+    ld (keycounter), a                  ; Increase the keycounter
+
+    ld de, keytable                     ; Start looking in the keytable for a match
+get_user_action3:
+    ld a, (de)
+    cp $ff                              ; Have we run out of possible matches?
+    jr z, get_user_action4
+    push de                             ; Store de for now
+    ld hl, keybuff                      ; hl starts at the beginning of the key buffer
+    ld b, 4                             ; Match 4 keys
+get_user_action_loop:
+    ld a, (de)
+    cp (hl)
+    jr nz, get_action_no_match
+    inc de
+    inc hl
+    djnz get_user_action_loop           ; After 4 good matches, we have our action
+    call clear_keybuff                  ; reset ready for next time
+    inc de                              ; de now points to the user action
+    ld a, (de)
+    pop de                              ; Drain de from stack
+    ret                                 ; Return the action
+get_action_no_match:
+    pop de                              ; restore keytable pointer
+    inc de
+    inc de
+    inc de
+    inc de
+    inc de
+    inc de                              ; move to next entry in table
+    jp get_user_action3
+get_user_action4:
+    xor a                               ; Failed to find any matches
     ret
-get_user_action_quit:
-    ld a, USER_QUIT
-    ret
-get_user_action_up:
-    ld a, USER_CURSOR_UP
-    ret
-get_user_action_down:
-    ld a, USER_CURSOR_DOWN
-    ret
-get_user_action_left:
-    ld a, USER_CURSOR_LEFT
-    ret
-get_user_action_right:
-    ld a, USER_CURSOR_RIGHT
-    ret
-get_user_action_home:
-    ld a, USER_CURSOR_HOME
-    ret
-get_user_action_end:
-    ld a, USER_CURSOR_END
-    ret
-get_user_action_page_up:
-    call get_key
-    cp $7e
-    jr nz, get_user_action_none
-    ld a, USER_CURSOR_PGUP
-    ret
-get_user_action_page_down:
-    call get_key
-    cp $7e
-    jr nz, get_user_action_none
-    ld a, USER_CURSOR_PGDN
-    ret
-get_user_action_delete:
-    call get_key
-    cp $7e
-    jr nz, get_user_action_none
-    ld a, USER_DELETE
-    ret
-        
-test_stuff:
-db 'Example file',EOL
-db 'With',EOL
-db 'not',EOL
-db 'much',EOL
-db 'in',EOL
-db 'it! I have made it a really long line so that there is the option to scroll right if needed to prove a point.',EOL
-db TAB,'But these lines',EOL
-db TAB,'are indented',EOL
-db TAB,'by one tab each!!!',EOL
-db EOL
-db ' ',TAB,'And this line goes "space", "tab"',EOL
-db '  ',TAB,'And this line goes "space", "space", "tab"',EOL
-db '   ',TAB,'And this line goes 3x"space" "tab"',EOL
-db '0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ',EOL
-db '1',EOL
-db '2',EOL
-db '3',EOL
-db '4',EOL
-db '5',EOL
-db '6',EOL
-db '7',EOL
-db '8',EOL
-db '9',EOL
-db 'ten!!!',EOL
-db '11',EOL
-db '12',EOL
-db '13 with some extra text',EOL
-db '14 with even more text',EOL
-db '15',EOL
-db '16',EOL
-db '17',EOL
-db 'eighteen is here',EOL
-db '19',EOL
-db '20',EOL
-db '21',EOL
-db 'The end.',END_OF_TEXT
 
 include "../cpm-fat/message.asm"
 
@@ -1477,6 +1508,13 @@ hang_over:
     db 0
 all_done:
     db 0
+keybuff:
+    ds 5
+keycounter:
+    db 0
+keypointer:
+    dw 0
+
 filename_buffer:
     ds 15
 stack:
@@ -1757,29 +1795,6 @@ clear_doc_lines:
     ld (doc_lines), hl
     ret
 
-test_fill:
-    call clear_selection
-    call clear_doc_lines
-
-    ; Fill ram with some test stuff
-    ld de, (doc_start)
-    ld hl, test_stuff
-test_fill1:
-    ld a, (hl)
-    cp EOL 
-    call z, inc_doc_lines
-    cp END_OF_TEXT
-    jp z, test_fill2
-    ld (de), a
-    inc hl
-    inc de
-    jr test_fill1
-test_fill2:
-    ld (de), a
-    ld (doc_end), de
-    ret
-
-
 show_cursor_coords:
     ld a, ESC
     call print_a
@@ -1915,14 +1930,14 @@ show_cursor_coords:
 ;     ret
 
 
-key_reader_loop:
-    call get_key
-    cp 'q'
-    jp z, 0
-    call show_a_as_hex
-    ld a, ' '
-    call print_a
-    jr key_reader_loop
+; key_reader_loop:
+;     call get_key
+;     cp 'q'
+;     jp z, 0
+;     call show_a_as_hex
+;     ld a, ' '
+;     call print_a
+;     jr key_reader_loop
 
 ;     ld b, 50
 ; number_loop:
