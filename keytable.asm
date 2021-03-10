@@ -1,10 +1,17 @@
-    ; This is the key-definition table, that ties keystrokes to user actions.
-    ; Each row shows the values that come from the keyboard, which can 
-    ; be up to 8 hex values, followed by $00s, followed by the action itself.
-    ; For example, on my keyboard, pressing Cursor-Up gives 1B 5B 41.
-    ; You can change the key defs by editing here and re-assembling.
-    ; Or you can use the JEDCONF.COM program to redefine the keys.
-    ; JEDCONF makes a JED.KEY file, which JED uses to define the keys.
+; This file contains the configuration of the screen size and the key definitions.
+
+VIEW_HEIGHT:
+    db 24
+VIEW_WIDTH:
+    db 80
+
+; This is the key-definition table, that ties keystrokes to user actions.
+; Each row shows the values that come from the keyboard, which can 
+; be up to 8 hex values, followed by $00s, followed by the action itself.
+; For example, on my keyboard, pressing Cursor-Up gives 1B 5B 41.
+; You can change the key defs by editing here and re-assembling.
+; Or you can use the JEDCONF.COM program to redefine the keys.
+; JEDCONF makes a JED.KEY file, which JED uses to define the keys.
 keytable: 
     db $0D, $00, $00, $00, $00, $00, $00, $00, $00, ENTER
     db $09, $00, $00, $00, $00, $00, $00, $00, $00, TAB

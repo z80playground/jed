@@ -32,7 +32,7 @@ read_jed_keys:
     ld c, BDOS_Set_DMA_Address
     call BDOS
 
-    ; We need to read in 13*10+1 bytes, so 131 bytes, so 1 full sector plus 3 bytes
+    ; We need to read in 2+13*10+1 bytes, so 133 bytes, so 1 full sector plus 5 bytes
 
     ld de, FCB
     ld c, BDOS_Read_Sequential
@@ -49,7 +49,7 @@ read_jed_keys:
 
     ld de, keytable+128
     ld hl, DMA
-    ld bc, 3
+    ld bc, 5
     ldir                            ; Copy the remaining bytes into the keytable
 
 read_jed_keys_done:

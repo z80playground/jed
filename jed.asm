@@ -94,12 +94,10 @@ main_program:
     call was_filename_provided
     call z, load_file
 
-    ;;;;;;;;;;;jp key_reader_loop
-
     call show_screen
 main_loop:
     call show_screen_if_scrolled
-    call show_cursor_coords
+    ;call show_cursor_coords
 main_loop_no_scroll_change:
     ;call show_current_char
     call set_cursor_position
@@ -420,7 +418,8 @@ show_current_line:
     ld a, (screen_left)
     ld (current_col), a                 ; Keep track of the current column we are displaying
     call skip_cols
-    ld b, VIEW_WIDTH                     ; b = cols left to show
+    ld a, (VIEW_WIDTH)                     ; b = cols left to Show
+    ld b, a
 show_current_line1:
     ld a, (hl)
     cp END_OF_TEXT
@@ -492,12 +491,18 @@ show_screen_if_scrolled1:
     ; Has cursor gone off right side?
     ; If cursor_x >= screen_left + PAGE_WIDTH then screen_left = (cursor_x - PAGE_WIDTH) + 1, redraw
     ld a, (screen_left)
-    add a, VIEW_WIDTH
+    ld e, a
+    ld a, (VIEW_WIDTH)
+    add a, e
     ld e, a
     ld a, (cursor_x)
     cp e
     jr c, show_screen_if_scrolled2
-    sub VIEW_WIDTH
+    ld e, a
+    ld a, (VIEW_WIDTH)
+    ld d, a
+    ld a, e
+    sub d
     inc a
     ld (screen_left), a
     ld b, 'R'
@@ -517,7 +522,8 @@ show_screen_if_scrolled3:
     ; Has cursor gone off bottom?
     ; If cursor_y >= screen_top + PAGE_HEIGHT then screen_top = (cursor_y - PAGE_HEIGHT) + 1, redraw
     ld hl, (screen_top)
-    ld e, VIEW_HEIGHT
+    ld a, (VIEW_HEIGHT)
+    ld e, a
     dec e
     ld d, 0
     add hl, de
@@ -527,7 +533,8 @@ show_screen_if_scrolled3:
     jr nc, show_screen_if_scrolled4
     ld hl, (cursor_y)
     ld d, 0
-    ld e, VIEW_HEIGHT
+    ld a, (VIEW_HEIGHT)
+    ld e, a
     or a                                ; clear carry
     sbc hl, de
     inc hl
@@ -704,7 +711,8 @@ cursor_page_down:
     sbc hl, de
     jp nc, main_loop                    ; We're at the bottom, so can't go any further down.
 
-    ld b, VIEW_HEIGHT
+    ld a, (VIEW_HEIGHT)
+    ld b, a
     dec b
 cursor_page_down_loop:
     ld hl, (cursor_y)
@@ -747,7 +755,8 @@ cursor_page_up:
     or h
     jp z, main_loop
 
-    ld b, VIEW_HEIGHT
+    ld a, (VIEW_HEIGHT)
+    ld b, a
     dec b
 cursor_page_up_loop:
     ld hl, (cursor_y)
@@ -942,7 +951,8 @@ show_screen_row:
     ld (current_col), a                 ; Keep track of the current column we are displaying
     call skip_cols
     jr z, shown_enough
-    ld b, VIEW_WIDTH                     ; b = cols left to show
+    ld a, (VIEW_WIDTH)                     
+    ld b, a                             ; b = cols left to Show
 show_screen1:
     ld a, (hl)
     cp END_OF_TEXT
@@ -968,7 +978,11 @@ show_screen_eol:
     ld a, (shown_lines)
     inc a
     ld (shown_lines), a
-    cp VIEW_HEIGHT
+    ld e, a
+    ld a, (VIEW_HEIGHT)
+    ld d, a
+    ld a, e
+    cp d
     jr nc, show_screen_done
     ld a, 13
     call print_a
@@ -1669,44 +1683,6 @@ include "readkeys.asm"
 ;     ld a, 'B'
 ;     call print_a
 ;     ret
-
-
-; key_reader_loop:
-;     call get_key
-;     cp 'q'
-;     jp z, 0
-;     call show_a_as_hex
-;     ld a, ' '
-;     call print_a
-;     jr key_reader_loop
-
-;     ld b, 50
-; number_loop:
-;     push bc
-;     call get_key
-;     pop bc
-;     cp 'q'
-;     jp z, exit
-;     cp 'h'
-;     jr nz, not_h
-;     inc b
-;     jr number_loop_cont
-; not_h:
-;     cp 'l'
-;     jr nz, not_l
-;     dec b
-;     jr number_loop_cont
-; not_l:
-;     jp number_loop
-; number_loop_cont:
-;     push bc
-;     call cls
-;     pop bc
-;     push bc
-;     ld a, b
-;     call print_a_as_decimal
-;     pop bc
-;     jr number_loop
 
 
 ; From here on is free space for the text file
