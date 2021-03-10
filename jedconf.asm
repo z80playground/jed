@@ -21,29 +21,10 @@ main_jed_conf:
 
     call cls
 
-; me_loop:
-;     call get_key_with_timeout
-;     ld a, c
-;     cp 0
-;     jr z, did_timeout
-;     cp 3
-;     ret z
-;     call show_a_as_hex
-;     ld a, ','
-;     call print_a
-;     jr me_loop
-; did_timeout:
-;     ld a, 'X'
-;     call print_a
-;     call newline
-;     jp me_loop
-;     jp 0
-
     call hide_cursor
-    call set_bold_on
+    call set_bold_off
     ld de, jedconf_welcome_message
     call show_string_de
-    call set_bold_off
 
     call show_config    
 
@@ -71,13 +52,33 @@ not_up_key:
 not_down_key:    
     cp 'x'
     jr nz, not_exit_key
-    jr jedconf_exit
+    jp jedconf_exit
 not_exit_key:
     cp 's'
     jr nz, not_save_key
     call write_jed_keys
     jp jedconf_exit
 not_save_key:
+    cp 'w'
+    jr nz, not_wider_key
+    call increase_width
+    jr jedconf_main_loop
+not_wider_key:
+    cp 'q'
+    jr nz, not_narrower_key
+    call decrease_width
+    jr jedconf_main_loop
+not_narrower_key:
+    cp 't'
+    jr nz, not_taller_key
+    call increase_height
+    jr jedconf_main_loop
+not_taller_key:
+    cp 'g'
+    jr nz, not_shorter_key
+    call decrease_height
+    jr jedconf_main_loop
+not_shorter_key:
     cp ' '
     jr c, get_key_sequence
     cp 127
@@ -85,6 +86,35 @@ not_save_key:
     ; No idea what they just pressed!
     jr jedconf_main_loop
 
+increase_height:
+    ld a, (VIEW_HEIGHT)
+    cp 99
+    ret nc
+    inc a
+    ld (VIEW_HEIGHT), a
+    ret
+decrease_height:
+    ld a, (VIEW_HEIGHT)
+    cp 11
+    ret c
+    dec a
+    ld (VIEW_HEIGHT), a
+    ret
+increase_width:
+    ld a, (VIEW_WIDTH)
+    cp 99
+    ret nc
+    inc a
+    ld (VIEW_WIDTH), a
+    ret
+decrease_width:
+    ld a, (VIEW_WIDTH)
+    cp 11
+    ret c
+    dec a
+    ld (VIEW_WIDTH), a
+    ret
+    
 get_key_sequence:
     ; read the keys that are coming in, to get the full sequence.
     ; But first, clear the key buffer.
@@ -118,22 +148,6 @@ get_key_sequence_loop:
     jp jedconf_main_loop                ; More than 8 keys, so ignore it
 
 get_key_sequence_done:
-;     ld b, 21
-;     ld c, 1
-;     call move_to_xy
-;     ld hl, key_buffer
-;     ld b, 8
-; get_key_sequence_done_loop:    
-;     push hl
-;     push bc
-;     ld a, (hl)
-;     call show_a_as_hex
-;     ld a, ' '
-;     call print_a
-;     pop bc
-;     pop hl
-;     inc hl
-;     djnz get_key_sequence_done_loop
     ; Put the key sequence of 8 bytes into the correct place in the keytable
     ld hl, (question_pointer)
     inc hl
@@ -144,6 +158,9 @@ get_key_sequence_done:
     ld hl, jedconf_key_buffer
     ld bc, 8
     ldir                            ; copy key def into table
+
+    ; As a help to the user, move to the next key automatically
+    call try_move_down
 
     jp jedconf_main_loop
 
@@ -172,9 +189,27 @@ try_move_up:
     ld (question_pointer), hl
     ret
 
+show_screen_dimensions:
+    ; Show the screen height and width in decimal.
+    ; Neither can be less than 10 or greater than 99
+    ld b, 3
+    ld c, 16
+    call move_to_xy
+    ld a, (VIEW_WIDTH)
+    call print_a_as_decimal
+
+    ld b, 4
+    ld c, 16
+    call move_to_xy
+    ld a, (VIEW_HEIGHT)
+    call print_a_as_decimal
+    ret
+
 show_config:
     ; This shows the current config on the screen.
-    ; It highlights the currently selected row.
+    ; It highlights the currently selected key.
+    ; It shows the screen height and width.
+    call show_screen_dimensions
     ld ix, questions+8
 show_questions_loop:
     ld b, (ix+6)                    ; b = row
@@ -264,19 +299,19 @@ show_current_key_def1:
 ; First and last are all zeros to make finding the first and last easier.
 questions:
     dw 0, 0, 0, 0 
-    dw ENTER, keytable+0, enter_text, 3
-    dw TAB, keytable+10, tab_text, 4
-    dw BACKSPACE, keytable+20, backspace_text, 5
-    dw USER_DELETE, keytable+30, delete_text, 6
-    dw USER_CURSOR_UP, keytable+40, cursor_up_text, 7
-    dw USER_CURSOR_DOWN, keytable+50, cursor_down_text, 8
-    dw USER_CURSOR_LEFT, keytable+60, cursor_left_text, 9
-    dw USER_CURSOR_RIGHT, keytable+70, cursor_right_text, 10
-    dw USER_CURSOR_HOME, keytable+80, home_text, 11
-    dw USER_CURSOR_END, keytable+90, end_text, 12
-    dw USER_CURSOR_PGUP, keytable+100, page_up_text, 13
-    dw USER_CURSOR_PGDN, keytable+110, page_down_text, 14
-    dw USER_QUIT, keytable+120, quit_text, 15
+    dw ENTER, keytable+0, enter_text, 8
+    dw TAB, keytable+10, tab_text, 9
+    dw BACKSPACE, keytable+20, backspace_text, 10
+    dw USER_DELETE, keytable+30, delete_text, 11
+    dw USER_CURSOR_UP, keytable+40, cursor_up_text, 12
+    dw USER_CURSOR_DOWN, keytable+50, cursor_down_text, 13
+    dw USER_CURSOR_LEFT, keytable+60, cursor_left_text, 14
+    dw USER_CURSOR_RIGHT, keytable+70, cursor_right_text, 15
+    dw USER_CURSOR_HOME, keytable+80, home_text, 16
+    dw USER_CURSOR_END, keytable+90, end_text, 17
+    dw USER_CURSOR_PGUP, keytable+100, page_up_text, 18
+    dw USER_CURSOR_PGDN, keytable+110, page_down_text, 19
+    dw USER_QUIT, keytable+120, quit_text, 20
     dw 0, 0, 0, 0
 
 enter_text:
@@ -317,7 +352,12 @@ question_pointer:
     dw 0
 
 jedconf_welcome_message:
-    db 'These are the current key-definitions for JED:',13,10,'$'    
+    db 'JED configuration:',13,10
+    db 13,10
+    db 'Screen width:      ("w" = wider, "q" = narrower)',13,10
+    db 'Screen height:     ("t" = taller, "g" = shorter)',13,10
+    db 13,10
+    db 'Key definitions:',13,10,'$'    
 
 jedconf_instructions:
     db 'Press "a" and "z" to select a key to configure.',13,10
