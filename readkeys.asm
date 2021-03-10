@@ -1,7 +1,7 @@
 ; This is the routine for reading in the JED.KEY file
 
 JED_KEY_FILENAME:
-    db 'JED     KEY'
+    db 'JED     CFG'
 
 read_jed_keys:
     ; Check if jed.key exists in the current directory.
