@@ -10,7 +10,7 @@
 ; [EOL]
 ; previous line was blank[END_OF_TEXT]
 ;
-; We keep track on the number of lines in the doc in the variable doc_lines.
+; We keep track of the number of lines in the doc in the variable doc_lines.
 ; No lines wrap, so doc_lines = total lines in the editor.
 ;
 ; There is a cursor that can move around inside the document.
@@ -20,33 +20,31 @@
 ; The current view of the document is displayed on the screen in
 ; an area VIEW_WIDTH x VIEW_HEIGHT.
 ;
+; The keys that can be used in this editor are:
+; Any letter/number/symbol in the range ASCII 33 to 128
+; ENTER
+; TAB
+; <BACKSPACE, i.e. Rubout backwards.
+; DEL, i.e. Forward delete.
+; Cursor keys: Arrow Up, Arrow Down, Arrow Left, Arrow Right.
+; Home, moves to first non-blank character in the line, then to the start of the line.
+; End, moves to the end of the current line.
+; Page Up, moves up a page.
+; Page Down, moves down a page.
+; Ctrl-X, saves and exits.
+;
+; The keys are configurable by the program JEDCONF.COM,
+; which writes a file called JED.KEY.
+; When JED.COM starts it reads in JED.KEY to define the keys.
+; These keys over-write the keytable below.
+; If no JED.KEY file is present, the default keys are used.
 
     org $0100
 
-    jr main_program
+    jp main_program
 
-    ; This is the key-definition table, that ties keystrokes to user actions.
-    ; Each row shows the values that come from the keyboard, which can 
-    ; be up to 4 hex values, followed by $FFs, followed by the action itself.
-    ; For example, on my keyboard, pressing Cursor-Up gives 1B 5B 41.
-    ; You can change the key defs by editing here and re-assembling.
-    ; Or you can use the JEDKEY.COM program to redefine the keys. (When I get round to making JEDKEY!!!!!)
-    ; JEDKEY just directly changes these bytes in JED.COM.
-keytable:
-    db $0D, $FF, $FF, $FF, $FF, ENTER
-    db $09, $FF, $FF, $FF, $FF, TAB
-    db $7F, $FF, $FF, $FF, $FF, BACKSPACE
-    db $1B, $5B, $33, $7E, $FF, USER_DELETE
-    db $1B, $5B, $41, $FF, $FF, USER_CURSOR_UP
-    db $1B, $5B, $42, $FF, $FF, USER_CURSOR_DOWN
-    db $1B, $5B, $44, $FF, $FF, USER_CURSOR_LEFT
-    db $1B, $5B, $43, $FF, $FF, USER_CURSOR_RIGHT
-    db $1B, $5B, $48, $FF, $FF, USER_CURSOR_HOME
-    db $1B, $5B, $46, $FF, $FF, USER_CURSOR_END
-    db $1B, $5B, $35, $7E, $FF, USER_CURSOR_PGUP
-    db $1B, $5B, $36, $7E, $FF, USER_CURSOR_PGDN
-    db $18, $FF, $FF, $FF, $FF, USER_QUIT
-    db $FF
+include "keytable.asm"
+include "version.asm"
 
 main_program:
     ; Load a file into ram
@@ -56,6 +54,9 @@ main_program:
 
     ; Set the stack to point to our local stack
     ld sp, stacktop
+
+    ; Read in JED.KEY if it exists
+    call read_jed_keys
 
     ; reset screen position and cursor pos
     ld hl, 0
@@ -79,11 +80,7 @@ main_program:
     ld (doc_start), hl
     ld (doc_pointer), hl
 
-    ; Find address of BIOS
-    ld hl, (1)
-    ld de, 9
-    add hl, de              ; hl points to BIOS_con_out
-    ld (BIOS_CON_OUT), hl
+    call find_address_of_bios
 
     ; Clear the doc area
     call clear_selection
@@ -412,19 +409,10 @@ show_current_line:
     ld de, (screen_top)
     or a
     sbc hl, de          ; y coord is in l
-    inc l               ; adjust because VT100 screen coords start at 1, but we start at 0
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, l
-    call print_a_as_decimal
-    ld a, ';'
-    call print_a
-    ld a, '1'
-    call print_a
-    ld a, 'H'
-    call print_a
+    ld b, l             ; y coord is now in b
+    inc b               ; adjust because VT100 screen coords start at 1, but we start at 0
+    ld c, 1             ; x coord is in c
+    call move_to_xy
 
     ; Now redraw the row
     ld hl, (doc_pointer)
@@ -479,8 +467,7 @@ show_current_line_done:
 
 out_of_memory:
     ld de, out_of_memory_message
-    ld c, BDOS_Print_String
-    call BDOS
+    call show_string_de
     jp exit
 out_of_memory_message:
     db 'Out of memory!',13,10,'$'
@@ -834,8 +821,7 @@ ask_for_filename:
     call cls
     
     ld de, save_as_message
-    ld c, BDOS_Print_String
-    call BDOS
+    call show_string_de
 
     ; Set up a buffer of max 13 chars, and fill with zeros
     ld hl, filename_buffer
@@ -929,68 +915,10 @@ set_cursor_position:
     ld b, a
     ld a, (cursor_x)
     sub b               
-    ld b, a             ; x coord is in b
-    inc b               ; adjust because VT100 screen coords start at 1, but we start at 0
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, l
-    push bc
-    call print_a_as_decimal
-    pop bc
-    ld a, ';'
-    call print_a
-    ld a, b
-    call print_a_as_decimal
-    ld a, 'H'
-    call print_a
-    ret
-
-print_a_as_decimal:
-    ; Prints a number (in a) from 0 to 255 in decimal
-    ld c, 0                         ; c tells us if we have started printing digits
-    ld b, a
-    cp 100
-    jr c, print_a_as_decimal_tens
-    cp 200
-    jr c, print_a_as_decimal_100
-    ld a, '2'
-    call print_a
-    ld a, b
-    sub 200
-    jr print_a_as_decimal_101
-print_a_as_decimal_100:
-    ld a, '1'
-    call print_a
-    ld a, b
-    sub 100
-print_a_as_decimal_101:
-    ld c, 1                         ; Yes, we have started printing digits
-print_a_as_decimal_tens:
-    ld b, 0
-print_a_as_decimal_tens1:
-    cp 10
-    jr c, print_a_as_decimal_units
-    sub 10
-    inc b
-    jp print_a_as_decimal_tens1
-
-print_a_as_decimal_units:
-    ld d, a
-    ld a, b
-    cp 0
-    jr nz, print_a_as_decimal_show_tens
-    ld a, c
-    cp 0
-    jr z, print_a_as_decimal_units1
-print_a_as_decimal_show_tens:
-    add a, '0'
-    call print_a
-print_a_as_decimal_units1:
-    ld a, '0'
-    add a, d
-    call print_a
+    ld c, a             ; x coord is in b
+    inc c               ; adjust because VT100 screen coords start at 1, but we start at 0
+    ld b, l             ; y coord now in b
+    call move_to_xy
     ret
 
 show_screen:
@@ -1219,76 +1147,6 @@ get_line_length_done:
     pop hl
     ret
 
-get_key:
-    ; Wait for a key. Return it in A
-    ld c, BDOS_CONSOLE_INPUT
-    ld e, $FF
-    call BDOS
-    cp 0
-    jr z, get_key
-    ld c, a
-    ret
-
-JP_HL:
-	jp	(hl)
-
-print_a:
-    push hl
-    push bc
-    push de
-    ld hl, (BIOS_CON_OUT)
-    ld c, a
-    call JP_HL
-    pop de
-    pop bc
-    pop hl
-    ret
-
-cls:
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, 'H'
-    call print_a
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, 'J'
-    call print_a
-    ret
-
-hide_cursor:
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, '?'
-    call print_a
-    ld a, '2'
-    call print_a
-    ld a, '5'
-    call print_a
-    ld a, 'l'
-    call print_a
-    ret
-
-show_cursor:
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, '?'
-    call print_a
-    ld a, '2'
-    call print_a
-    ld a, '5'
-    call print_a
-    ld a, 'h'
-    call print_a
-    ret
-
 inc_doc_lines:
     push hl
     ld hl, (doc_lines)
@@ -1300,12 +1158,16 @@ inc_doc_lines:
 clear_keybuff:
     ld hl, keybuff
     ld (keypointer), hl
-    ld a, $FF
+    ld a, $00
     ld (keybuff), a
     ld (keybuff+1), a
     ld (keybuff+2), a
     ld (keybuff+3), a
     ld (keybuff+4), a
+    ld (keybuff+5), a
+    ld (keybuff+6), a
+    ld (keybuff+7), a
+    ld (keybuff+8), a
     xor a
     ld (keycounter), a
     ret
@@ -1319,18 +1181,18 @@ get_user_action:
     ; Return 0 if no user_action.
     ;
     ; The key definitions are stored like this:
-    ; DELETE = 05, 23, 47, 90, FF, ACTION
-    ; If they are not 4 keys long they are padded with FFs:
-    ; CURSOR_UP = 12, 65, FF, FF, FF, ACTION
-    ; ENTER = 13, FF, FF, FF, FF, ACTION
+    ; DELETE = 05, 23, 47, 90, 22, 33, 44, 55, 00, ACTION
+    ; If they are not 8 keys long they are padded with 00s:
+    ; CURSOR_UP = 12, 65, 00, 00, 00, 00, 00, 00, 00, ACTION
+    ; ENTER = 13, 00, 00, 00, 00, 00, 00, 00, 00, ACTION
     ; The ACTION is the number of the desired action, e.g. CURSOR_UP = 128
-    ; When you press a key, you may get 1 to 4 actual keys from it.
+    ; When you press a key, you may get 1 to 8 actual keys from it.
     ; These are compared to each definition in the table, in turn.
     ; If more than one match then we need to wait for another key.
     ; Some keys are not configurable. These are all single key
-    ; presses, and are all >= 32.
+    ; presses, and are all >= 32 and < 127.
     ; The keys go into a buffer, called keybuff.
-    ; It's 4 spaces long. It has a pointer called keypointer, and a counter called keycounter.
+    ; It's 8 spaces long. It has a pointer called keypointer, and a counter called keycounter.
     ; When we get a good key, we clear the buffer.
 
     ; Let's just show the keybuff quickly
@@ -1361,19 +1223,22 @@ get_user_action:
 ;     inc hl
 ;     djnz show_keybuff_loop
 
-
-
-    call get_key                        ; c = key
+    call get_key_with_timeout           ; c = key
     ld a, (keycounter)
     or a                                ; Are we at the start of the keybuff?
     jr nz, get_user_action1
     ld a, c
+    cp 0
+    jr z, get_user_action               ; If nothing pressed, start again
     cp ' '
-    ret nc                              ; Ordinary key press
+    jr c, get_user_action1              ; Not ordinary key press if < 32
+    cp 127
+    jr nc, get_user_action1             ; Not ordinary key press if >= 127
+    ret                                 ; Otherwise ordinary key press, like "G"
 get_user_action1:
-    ; Have we read a 5th key? If so something is wrong and need to start again.
+    ; Have we read a 9th key? If so something is wrong and need to start again.
     ld a, (keycounter)
-    cp 4
+    cp 8
     jr c, get_user_action2
     call clear_keybuff
     jp get_user_action4
@@ -1391,18 +1256,18 @@ get_user_action2:
     ld de, keytable                     ; Start looking in the keytable for a match
 get_user_action3:
     ld a, (de)
-    cp $ff                              ; Have we run out of possible matches?
+    cp $00                              ; Have we run out of possible matches?
     jr z, get_user_action4
     push de                             ; Store de for now
     ld hl, keybuff                      ; hl starts at the beginning of the key buffer
-    ld b, 4                             ; Match 4 keys
+    ld b, 8                             ; Match 8 keys max
 get_user_action_loop:
     ld a, (de)
     cp (hl)
     jr nz, get_action_no_match
     inc de
     inc hl
-    djnz get_user_action_loop           ; After 4 good matches, we have our action
+    djnz get_user_action_loop           ; After 8 good matches, we have our action
     call clear_keybuff                  ; reset ready for next time
     inc de                              ; de now points to the user action
     ld a, (de)
@@ -1415,62 +1280,23 @@ get_action_no_match:
     inc de
     inc de
     inc de
+    inc de
+    inc de
+    inc de
+    inc de
     inc de                              ; move to next entry in table
     jp get_user_action3
 get_user_action4:
     xor a                               ; Failed to find any matches
     ret
 
-include "../cpm-fat/message.asm"
-
-; CONSTANTS
-VIEW_WIDTH equ 80
-VIEW_HEIGHT equ 20
-TAB_WIDTH equ 8
-TAB_MASK equ %00000111
-END_OF_TEXT equ 26
-START_OF_TEXT equ 2
-EOL equ 13
-LF equ 10
-TAB equ 9
-ESC equ 27
-BDOS equ 5
-BACKSPACE equ $7F
-ENTER equ $0D
-BDOS_CONSOLE_INPUT equ 6
-
-USER_CURSOR_UP equ 128
-USER_CURSOR_DOWN equ 129
-USER_CURSOR_LEFT equ 130
-USER_CURSOR_RIGHT equ 131
-USER_CURSOR_HOME equ 132
-USER_CURSOR_END equ 133
-USER_CURSOR_PGUP equ 134
-USER_CURSOR_PGDN equ 135
-USER_DELETE equ 136
-USER_QUIT equ 255
-
-FCB equ 005CH   ; We use the standard default FCB
-DMA equ 0080H   ; Standard DMA area
-BDOS_Open_File  equ 15          ; 0F
-BDOS_Close_File equ 16          ; 10
-BDOS_Read_Sequential equ 20     ; 14
-BDOS_Print_String equ 9         ; 09
-BDOS_Set_DMA_Address equ 26     ; 1A
-BDOS_Delete_File equ 19         ; 13
-BDOS_Rename_File equ 23         ; 17
-BDOS_Write_Sequential equ 21    ; 15
-BDOS_Make_File equ 22           ; 16
-BDOS_Read_Console_Buffer equ 10 ; 0A
-BDOS_Search_for_First equ 17    ; 11
-
+include "constants.asm"
+include "funcs.asm"
     
 ; variables
 cursor_x:
     db 0
 cursor_y:
-    dw 0
-BIOS_CON_OUT:
     dw 0
 shown_lines:
     db 0
@@ -1509,7 +1335,7 @@ hang_over:
 all_done:
     db 0
 keybuff:
-    ds 5
+    ds 10
 keycounter:
     db 0
 keypointer:
@@ -1521,9 +1347,6 @@ stack:
     ds 31
 stacktop:
     db 0
-
-;;;;;;;;;;;;;;;;;;;;;
-; debug routines
 
 save_file:
     call save_as_temp_file
@@ -1565,9 +1388,7 @@ erase_original_file:
 
 failed_to_save:
     ld de, failed_to_save_message
-    ld c, BDOS_Print_String
-    call BDOS
-    ret
+    jp show_string_de
 failed_to_save_message:
     db 'ERROR saving file!',13,10,'$'
 
@@ -1689,16 +1510,6 @@ read_a:
     ld (read_pointer), hl
     ret
 
-clear_remainder_of_fcb:
-    ; This puts zeros in the rest of a FCB, for +12 to +35
-    ld hl, FCB+12
-    ld b, 24
-clear_remainder_of_fcb1:
-    ld (hl), 0
-    inc hl
-    djnz clear_remainder_of_fcb1
-    ret
-
 load_file:
     ; Test if the file can be opened for reading
     ld c, BDOS_Open_File
@@ -1776,8 +1587,7 @@ load_file_done:
 
 could_not_open_file:
     ld de, could_not_open_file_message
-    ld c, BDOS_Print_String
-    call BDOS
+    call show_string_de
     jp 0
 could_not_open_file_message:
     db 'File not found.',13,10,'$'
@@ -1796,18 +1606,9 @@ clear_doc_lines:
     ret
 
 show_cursor_coords:
-    ld a, ESC
-    call print_a
-    ld a, '['
-    call print_a
-    ld a, 25
-    call print_a_as_decimal
-    ld a, ';'
-    call print_a
-    ld a, 10
-    call print_a_as_decimal
-    ld a, 'H'
-    call print_a
+    ld c, 10
+    ld b, 25
+    call move_to_xy
     ld a, (cursor_x)
     call print_a_as_decimal
     ld a, ' '
@@ -1815,6 +1616,8 @@ show_cursor_coords:
     ld a, ' '
     call print_a
     ret    
+
+include "readkeys.asm"
 
 ; show_current_char:
 ;     ; Show at the bottom of the screen what the cursor is pointing to
@@ -1867,68 +1670,6 @@ show_cursor_coords:
 ;     call print_a
 ;     ret
 
-; show_fcb_message:
-;     db 'FCB: $'
-; show_fcb:
-;     ; Shows the FCB on screen.
-;     ld de, show_fcb_message
-;     ld c, BDOS_Print_String
-;     call BDOS
-
-;     ld de, FCB
-
-;     ; Show Drive Letter
-;     ld a, (de)
-;     inc de
-;     cp 0
-;     jr z, show_fcb1
-;     add a, 'A'-1
-;     call print_a
-;     ld a, ':'
-;     call print_a
-;     ld a, ' '
-;     call print_a
-;     jr show_fcb2
-
-; show_fcb1:
-;     ld a, 'd'
-;     call print_a
-;     ld a, 'f'
-;     call print_a
-;     ld a, 'l'
-;     call print_a
-;     ld a, 't'
-;     call print_a
-;     ld a, ':'
-;     call print_a
-;     ld a, ' '
-;     call print_a
-; show_fcb2:
-;     ; Show filename
-;     ld b, 8
-; show_fcb3:
-;     ld a, (de)
-;     inc de
-;     call print_a
-;     djnz show_fcb3
-; show_fcb4:
-;     ; Show ext
-;     ld a, '.'
-;     call print_a
-;     ld b, 3
-; show_fcb5:
-;     ld a, (de)
-;     and %01111111
-;     inc de
-;     call print_a
-;     djnz show_fcb5
-; show_fcb_end:
-;     ld a, 13
-;     call print_a
-;     ld a, 10
-;     call print_a
-;     ret
-
 
 ; key_reader_loop:
 ;     call get_key
@@ -1966,6 +1707,7 @@ show_cursor_coords:
 ;     call print_a_as_decimal
 ;     pop bc
 ;     jr number_loop
+
 
 ; From here on is free space for the text file
 end_of_code:
