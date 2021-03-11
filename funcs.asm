@@ -338,3 +338,15 @@ clear_remainder_of_fcb1:
 ;     call print_a
 ;     ret
 
+; report_on_bdos_result:
+;     ; reports on a result for the bdos, passed in A
+;     push af
+;     ld de, bdos_result_message
+;     call show_string_de
+;     pop af
+;     call show_a_as_hex
+;     call newline
+;     ret
+
+; bdos_result_message:
+;     db 'BDOS result: $'
