@@ -1499,12 +1499,15 @@ sector_complete:
     ld de, FCB
     ld c, BDOS_Write_Sequential
     call BDOS
+    cp 255
+    jr z, sector_complete_end
 
     ; Any more to do?
     ld a, (all_done)
     cp 0
     jr z, save_main_loop
 
+sector_complete_end:
     ; Close temp file
     ld c, BDOS_Close_File
     ld de, FCB
