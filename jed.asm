@@ -77,6 +77,7 @@ main_program:
     inc hl
     ld (hl), START_OF_TEXT            ; Put the START OF TEXT terminator before the file
     inc hl
+    ld (hl), END_OF_TEXT              ; Put the END OF TEXT terminator after the (blank) file
     ld (doc_start), hl
     ld (doc_pointer), hl
 
