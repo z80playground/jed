@@ -17,3 +17,9 @@ It's only a prototype so far, but it supports this:
 
 There is also a configuration program, JEDCONF.COM, which configures the screen dimensions, and the key definitions. Run JEDCONF first to define all your keys and set your screen height and width. This will create a file JED.CFG with the configuration in it, which JED will then use. Each key, such as Page-Up can be associated with a string of up to 8 hex values, so just about any keyboard should work with it.
 
+# TODO list:
+
+* Implement "JED newfile.txt" so you can create a new empty file.
+* Add "quit without saving" option, in case you do something stupid.
+* Selecting parts of a file with shift-cursor-keys.
+* Copy/Paste/Cut
