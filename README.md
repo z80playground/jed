@@ -15,5 +15,5 @@ It's only a prototype so far, but it supports this:
 * You can press <kbd>PAGE-UP</kbd> and <kbd>PAGE-DOWN</kbd> to go up and down by a page.
 * You can press <kbd>Ctrl</kbd> + <kbd>X</kbd> to exit.
 
-Note that the editor is fixed to 80 cols by 20 rows at present.
+There is also a configuration program, JEDCONF.COM, which configures the screen dimensions, and the key definitions. Run JEDCONF first to define all your keys and set your screen height and width. This will create a file JED.CFG with the configuration in it, which JED will then use. Each key, such as Page-Up can be associated with a string of up to 8 hex values, so just about any keyboard should work with it.
 
