@@ -27,3 +27,4 @@ There is also an auto-indent option, so if you indent a line, then press ENTER, 
 * Implement "JED newfile.txt" so you can create a new empty file.
 * Selecting parts of a file with shift-cursor-keys.
 * Copy/Paste/Cut
+* Integrate ZSM so that you can assemble and make a .com file directly from inside JED.
