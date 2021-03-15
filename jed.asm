@@ -72,6 +72,7 @@ main_program:
 
     ld (cursor_y), hl
     ld (cursor_x), a
+    ld (want_x), a
 
     ; Find address of BDOS, minus 1, which is the end of ram, and store it
     ld hl, (6)
@@ -252,6 +253,7 @@ join_with_previous_line1:
     call skip_cols                  ; go to end of previous line
     ld a, c
     ld (cursor_x), a
+    ld (want_x), a
 
     ; move cursor up
     ld hl, (cursor_y)
@@ -271,6 +273,7 @@ normal_backspace:
     call skip_cols
     ld a, c
     ld (cursor_x), a
+    ld (want_x), a
 
 backspace_pressed1:
     ; Move everything in memory from current pos down by one.
@@ -309,13 +312,20 @@ need_to_redraw:
     call show_screen
     jp main_loop    
 
-insert_char:
-    ; Char to insert is in A
-    ; Work out if there is enough memory free to insert a char.
+any_memory_left:
+    ; Check if there is at least 1 byte of memory left.
+    ; Returns Carry set if out of memory.
+    ; This preserves A.
     ld hl, (ram_end)
     ld de, (doc_end)
     or a                                ; clear carry
     sbc hl, de
+    ret
+
+insert_char:
+    ; Char to insert is in A
+    ; Work out if there is enough memory free to insert a char.
+    call any_memory_left
     jp c, out_of_memory
 
     ; Check length of current line. If it is 255 we cannot allow any more, unless we are pressing ENTER!
@@ -330,6 +340,106 @@ insert_char:
     ld a, d
 
 insert_char1:
+    call insert_a_into_doc
+
+    ; Was the key the ENTER / return key??
+    cp ENTER
+    jr z, enter_pressed
+
+    cp TAB
+    jr z, tab_pressed
+
+    ld a, (cursor_x)
+    inc a
+    ld (cursor_x), a
+    ld (want_x), a
+
+    ; Redraw the current row
+    call show_current_line
+
+    jp main_loop
+
+tab_pressed:
+    ; User has pressed the TAB key.
+    ; The cursor may move right 4, 3, 2 or 1 char.
+    ld a, (cursor_x)
+    ld b, a
+tab_pressed1:
+    inc a
+    inc b
+    and TAB_MASK
+    or a
+    jr nz, tab_pressed1
+    ld a, b
+    ld (cursor_x), a
+    ld (want_x), a
+    call show_current_line
+    jp main_loop
+
+enter_pressed:
+    ; User has pressed ENTER / return
+    ; It is just like they are inserting a character.
+    ; But the character splits the lines up.
+    ld hl, (doc_lines)
+    inc hl
+    ld (doc_lines), hl              ; Increase number of lines in doc
+
+    ld hl, (cursor_y)
+    inc hl
+    ld (cursor_y), hl               ; Move down a line
+
+    xor a
+    ld (cursor_x), a
+    ld (want_x), a                  ; move to start of next line
+
+    call copy_down_indent           ; Copy indent level from row above
+    
+    call show_screen
+
+    jp main_loop
+
+copy_down_indent:
+    ; This copies the indent from the previous line to the current line,
+    ; which we assume doc_pointer is currently pointing to.
+    ld hl, (doc_pointer)
+    push hl
+    call skip_to_start_of_previous_line     ; hl = previous line
+    pop de                                  ; de = current line
+copy_down_indent_loop:
+    ld a, (hl)
+    cp TAB
+    jr z, copy_down_indent1
+    cp ' '
+    jr nz, finish_copy_down_indent
+copy_down_indent1:
+    push hl
+    push de
+    call any_memory_left
+    jp c, cant_insert_indent
+    call insert_a_into_doc
+    pop de
+    pop hl
+    inc de
+    inc hl
+    jr copy_down_indent_loop
+
+cant_insert_indent:
+    pop de
+    pop hl
+    jp out_of_memory
+
+finish_copy_down_indent:
+    ; Update the cursor position after copying the indent
+    ld hl, (doc_pointer)
+    call skip_to_start_of_line
+    call skip_spaces                            ; col into into c, pointer into hl
+    ld a, c
+    ld (doc_pointer), hl
+    ld (cursor_x), a
+    ld (want_x), a
+    ret
+
+insert_a_into_doc:
     ; Move everything from current pos up by one.
     ld hl, (doc_end)
     ld de, (doc_pointer)
@@ -354,57 +464,7 @@ insert_char1:
     ld (hl), a
     inc hl
     ld (doc_pointer), hl
-
-    ; Was the key the ENTER / return key??
-    cp ENTER
-    jr z, enter_pressed
-
-    cp TAB
-    jr z, tab_pressed
-
-    ld a, (cursor_x)
-    inc a
-    ld (cursor_x), a
-
-    ; Redraw the current row
-    call show_current_line
-
-    jp main_loop
-
-tab_pressed:
-    ; User has pressed the TAB key.
-    ; The cursor may move right 4, 3, 2 or 1 char.
-    ld a, (cursor_x)
-    ld b, a
-tab_pressed1:
-    inc a
-    inc b
-    and TAB_MASK
-    or a
-    jr nz, tab_pressed1
-    ld a, b
-    ld (cursor_x), a
-    call show_current_line
-    jp main_loop
-
-enter_pressed:
-    ; User has pressed ENTER / return
-    ; It is like they are inserting a character.
-    ; But the character splits the lines up.
-    ld hl, (doc_lines)
-    inc hl
-    ld (doc_lines), hl
-
-    ld hl, (cursor_y)
-    inc hl
-    ld (cursor_y), hl
-
-    ld a, 0
-    ld (cursor_x), a
-    
-    call show_screen
-
-    jp main_loop
+    ret
 
 show_current_line:
     ; Show the current line again because it has changed
@@ -513,7 +573,7 @@ show_current_line_done:
 out_of_memory:
     ld de, out_of_memory_message
     call show_string_de
-    jp exit
+    jp save_and_exit
 out_of_memory_message:
     db 'Out of memory!',13,10,'$'
 
@@ -606,7 +666,7 @@ cursor_down:
     ; Update the doc_pointer and cursor_x
     ld hl, (doc_pointer)
     call skip_to_start_of_next_line
-    ld a, (cursor_x)
+    ld a, (want_x)
     call skip_cols
     ld (doc_pointer), hl
     ld a, c
@@ -623,7 +683,7 @@ cursor_up:
     ; Update the doc_pointer and cursor_x
     ld hl, (doc_pointer)
     call skip_to_start_of_previous_line
-    ld a, (cursor_x)
+    ld a, (want_x)
     call skip_cols
     ld (doc_pointer), hl
     ld a, c
@@ -642,6 +702,7 @@ cursor_left:
     ld a, (cursor_x)
     dec a
     ld (cursor_x), a
+    ld (want_x), a
 
     ld a, (hl)
     cp EOL                          ; Are we wrapping back onto previous row?
@@ -659,6 +720,7 @@ cursor_left_wrap:
     ld (doc_pointer), hl
     ld a, c
     ld (cursor_x), a                ; Set cursor to end of line
+    ld (want_x), a
     ld a, (cursor_y)
     dec a
     ld (cursor_y), a
@@ -672,6 +734,7 @@ cursor_left_tab:
     ld (doc_pointer), hl
     ld a, c
     ld (cursor_x), a
+    ld (want_x), a
     jp main_loop
 
 cursor_right:
@@ -685,6 +748,7 @@ cursor_right:
     ld a, (cursor_x)                ; Move one space right
     inc a
     ld (cursor_x), a
+    ld (want_x), a
     ld hl, (doc_pointer)
     ld a, (hl)
     inc hl
@@ -698,6 +762,7 @@ cursor_right_wrap:
     ; Cursor has gone off the end of line x onto start of line x+1
     xor a
     ld (cursor_x), a                ; Set cursor to start of line
+    ld (want_x), a
     ld a, (cursor_y)
     inc a
     ld (cursor_y), a                ; On next line
@@ -709,6 +774,7 @@ cursor_right_tab:
     ld a, (cursor_x)
     inc a
     ld (cursor_x), a
+    ld (want_x), a
     jr cursor_right_tab
 
 cursor_home:
@@ -730,12 +796,14 @@ cursor_home:
     ld a, c
     ld (doc_pointer), hl
     ld (cursor_x), a
+    ld (want_x), a
     jp main_loop
 cursor_home_start_of_line:
     call skip_to_start_of_line
     ld (doc_pointer), hl
     xor a
     ld (cursor_x), a
+    ld (want_x), a
     jp main_loop
 
 cursor_end:
@@ -747,6 +815,7 @@ cursor_end:
     ld (doc_pointer), hl
     ld a, c
     ld (cursor_x), a
+    ld (want_x), a
     jp main_loop
 
 cursor_page_down:
@@ -783,7 +852,7 @@ cursor_page_down_loop:
     call get_line_length                ; length is in a, hl still pointing at start of line
     ld b, a
     dec b
-    ld a, (cursor_x)
+    ld a, (want_x)
     cp b
     jr c, cursor_page_down_ok
     jr z, cursor_page_down_ok
@@ -825,7 +894,7 @@ cursor_page_up_stop:
     call get_line_length                ; length is in a, hl still pointing at start of line
     ld b, a
     dec b
-    ld a, (cursor_x)
+    ld a, (want_x)
     cp b
     jr c, cursor_page_up_ok
     jr z, cursor_page_up_ok
@@ -1420,6 +1489,8 @@ cursor_x:
     db 0
 cursor_y:
     dw 0
+want_x:
+    db 0            ; This is the cursor_x value that the user wants to be on, even if they can't be on it because the line is too short.
 shown_lines:
     db 0
 doc_start:  
