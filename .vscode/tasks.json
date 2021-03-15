@@ -45,8 +45,8 @@
             "label": "copy_jed",
             "type": "shell",
             "command": "copy",
-            "args": ["C:\\z80 playground\\source\\jed\\jed.com", "d:\\cpm\\disks\\J\\"],
-            //"args": ["C:\\z80 playground\\source\\jed\\jed*.com", "c:\\runcpm\\runcpm\\debug\\A\\0\\"],
+            //"args": ["C:\\z80 playground\\source\\jed\\jed.com", "d:\\cpm\\disks\\J\\"],
+            "args": ["C:\\z80 playground\\source\\jed\\jed*.com", "c:\\runcpm\\runcpm\\debug\\A\\0\\"],
             "problemMatcher": [],
             "group": "test",
             "presentation": {

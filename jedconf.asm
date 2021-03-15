@@ -192,13 +192,13 @@ try_move_up:
 show_screen_dimensions:
     ; Show the screen height and width in decimal.
     ; Neither can be less than 10 or greater than 99
-    ld b, 3
+    ld b, 2
     ld c, 16
     call move_to_xy
     ld a, (VIEW_WIDTH)
     call print_a_as_decimal
 
-    ld b, 4
+    ld b, 3
     ld c, 16
     call move_to_xy
     ld a, (VIEW_HEIGHT)
@@ -299,19 +299,20 @@ show_current_key_def1:
 ; First and last are all zeros to make finding the first and last easier.
 questions:
     dw 0, 0, 0, 0 
-    dw ENTER, keytable+0, enter_text, 8
-    dw TAB, keytable+10, tab_text, 9
-    dw BACKSPACE, keytable+20, backspace_text, 10
-    dw USER_DELETE, keytable+30, delete_text, 11
-    dw USER_CURSOR_UP, keytable+40, cursor_up_text, 12
-    dw USER_CURSOR_DOWN, keytable+50, cursor_down_text, 13
-    dw USER_CURSOR_LEFT, keytable+60, cursor_left_text, 14
-    dw USER_CURSOR_RIGHT, keytable+70, cursor_right_text, 15
-    dw USER_CURSOR_HOME, keytable+80, home_text, 16
-    dw USER_CURSOR_END, keytable+90, end_text, 17
-    dw USER_CURSOR_PGUP, keytable+100, page_up_text, 18
-    dw USER_CURSOR_PGDN, keytable+110, page_down_text, 19
-    dw USER_QUIT, keytable+120, quit_text, 20
+    dw ENTER, keytable+0, enter_text, 5
+    dw TAB, keytable+10, tab_text, 6
+    dw BACKSPACE, keytable+20, backspace_text, 7
+    dw USER_DELETE, keytable+30, delete_text, 8
+    dw USER_CURSOR_UP, keytable+40, cursor_up_text, 9
+    dw USER_CURSOR_DOWN, keytable+50, cursor_down_text, 10
+    dw USER_CURSOR_LEFT, keytable+60, cursor_left_text, 11
+    dw USER_CURSOR_RIGHT, keytable+70, cursor_right_text, 12
+    dw USER_CURSOR_HOME, keytable+80, home_text, 13
+    dw USER_CURSOR_END, keytable+90, end_text, 14
+    dw USER_CURSOR_PGUP, keytable+100, page_up_text, 15
+    dw USER_CURSOR_PGDN, keytable+110, page_down_text, 16
+    dw USER_QUIT, keytable+120, quit_text, 17
+    dw USER_QUIT_NO_SAVE, keytable+130, quit_no_save_text, 18
     dw 0, 0, 0, 0
 
 enter_text:
@@ -339,7 +340,9 @@ page_up_text:
 page_down_text:
     db 'Page Down','$'
 quit_text:
-    db 'Exit, e.g. Ctrl-X','$'
+    db 'Save and Exit','$'
+quit_no_save_text:
+    db 'Exit without saving','$'
 
 jedconf_key_buffer:
     ds 10
@@ -353,10 +356,8 @@ question_pointer:
 
 jedconf_welcome_message:
     db 'JED configuration:',13,10
-    db 13,10
     db 'Screen width:      ("w" = wider, "q" = narrower)',13,10
     db 'Screen height:     ("t" = taller, "g" = shorter)',13,10
-    db 13,10
     db 'Key definitions:',13,10,'$'    
 
 jedconf_instructions:
