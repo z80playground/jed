@@ -312,13 +312,20 @@ need_to_redraw:
     call show_screen
     jp main_loop    
 
-insert_char:
-    ; Char to insert is in A
-    ; Work out if there is enough memory free to insert a char.
+any_memory_left:
+    ; Check if there is at least 1 byte of memory left.
+    ; Returns Carry set if out of memory.
+    ; This preserves A.
     ld hl, (ram_end)
     ld de, (doc_end)
     or a                                ; clear carry
     sbc hl, de
+    ret
+
+insert_char:
+    ; Char to insert is in A
+    ; Work out if there is enough memory free to insert a char.
+    call any_memory_left
     jp c, out_of_memory
 
     ; Check length of current line. If it is 255 we cannot allow any more, unless we are pressing ENTER!
@@ -333,30 +340,7 @@ insert_char:
     ld a, d
 
 insert_char1:
-    ; Move everything from current pos up by one.
-    ld hl, (doc_end)
-    ld de, (doc_pointer)
-    or a                                ; clear carry
-    sbc hl, de                          
-    ld b, h
-    ld c, l                             ; BC = size of doc beyond this point
-
-    ld hl, (doc_end)
-    ld e, l
-    ld d, h
-    inc de
-    inc bc
-    lddr                                ; Copy up the remaining doc by 1 byte
-
-    ; Add the current char.
-    ld hl, (doc_end)
-    inc hl
-    ld (doc_end), hl
-
-    ld hl, (doc_pointer)
-    ld (hl), a
-    inc hl
-    ld (doc_pointer), hl
+    call insert_a_into_doc
 
     ; Was the key the ENTER / return key??
     cp ENTER
@@ -394,23 +378,93 @@ tab_pressed1:
 
 enter_pressed:
     ; User has pressed ENTER / return
-    ; It is like they are inserting a character.
+    ; It is just like they are inserting a character.
     ; But the character splits the lines up.
     ld hl, (doc_lines)
     inc hl
-    ld (doc_lines), hl
+    ld (doc_lines), hl              ; Increase number of lines in doc
 
     ld hl, (cursor_y)
     inc hl
-    ld (cursor_y), hl
+    ld (cursor_y), hl               ; Move down a line
 
-    ld a, 0
+    xor a
     ld (cursor_x), a
-    ld (want_x), a
+    ld (want_x), a                  ; move to start of next line
+
+    call copy_down_indent           ; Copy indent level from row above
     
     call show_screen
 
     jp main_loop
+
+copy_down_indent:
+    ; This copies the indent from the previous line to the current line,
+    ; which we assume doc_pointer is currently pointing to.
+    ld hl, (doc_pointer)
+    push hl
+    call skip_to_start_of_previous_line     ; hl = previous line
+    pop de                                  ; de = current line
+copy_down_indent_loop:
+    ld a, (hl)
+    cp TAB
+    jr z, copy_down_indent1
+    cp ' '
+    jr nz, finish_copy_down_indent
+copy_down_indent1:
+    push hl
+    push de
+    call any_memory_left
+    jp c, cant_insert_indent
+    call insert_a_into_doc
+    pop de
+    pop hl
+    inc de
+    inc hl
+    jr copy_down_indent_loop
+
+cant_insert_indent:
+    pop de
+    pop hl
+    jp out_of_memory
+
+finish_copy_down_indent:
+    ; Update the cursor position after copying the indent
+    ld hl, (doc_pointer)
+    call skip_to_start_of_line
+    call skip_spaces                            ; col into into c, pointer into hl
+    ld a, c
+    ld (doc_pointer), hl
+    ld (cursor_x), a
+    ld (want_x), a
+    ret
+
+insert_a_into_doc:
+    ; Move everything from current pos up by one.
+    ld hl, (doc_end)
+    ld de, (doc_pointer)
+    or a                                ; clear carry
+    sbc hl, de                          
+    ld b, h
+    ld c, l                             ; BC = size of doc beyond this point
+
+    ld hl, (doc_end)
+    ld e, l
+    ld d, h
+    inc de
+    inc bc
+    lddr                                ; Copy up the remaining doc by 1 byte
+
+    ; Add the current char.
+    ld hl, (doc_end)
+    inc hl
+    ld (doc_end), hl
+
+    ld hl, (doc_pointer)
+    ld (hl), a
+    inc hl
+    ld (doc_pointer), hl
+    ret
 
 show_current_line:
     ; Show the current line again because it has changed
@@ -519,7 +573,7 @@ show_current_line_done:
 out_of_memory:
     ld de, out_of_memory_message
     call show_string_de
-    jp exit
+    jp save_and_exit
 out_of_memory_message:
     db 'Out of memory!',13,10,'$'
 
