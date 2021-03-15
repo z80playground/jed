@@ -26,4 +26,5 @@ keytable:
     db $1B, $5B, $35, $7E, $00, $00, $00, $00, $00, USER_CURSOR_PGUP
     db $1B, $5B, $36, $7E, $00, $00, $00, $00, $00, USER_CURSOR_PGDN
     db $18, $00, $00, $00, $00, $00, $00, $00, $00, USER_QUIT
+    db $19, $00, $00, $00, $00, $00, $00, $00, $00, USER_QUIT_NO_SAVE
     db $00

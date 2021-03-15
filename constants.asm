@@ -2,7 +2,9 @@
 TAB_WIDTH equ 8
 TAB_MASK equ %00000111
 END_OF_TEXT equ 26
-START_OF_TEXT equ 2
+START_OF_TEXT equ 31
+START_LABEL equ 1           ; This is the syntax highlighting start for a label
+END_SYNTAX_HIGHLIGHT equ 7
 EOL equ 13
 LF equ 10
 TAB equ 9
@@ -22,6 +24,7 @@ USER_CURSOR_PGUP equ 134
 USER_CURSOR_PGDN equ 135
 USER_DELETE equ 136
 USER_QUIT equ 255
+USER_QUIT_NO_SAVE equ 254
 
 FCB equ 005CH   ; We use the standard default FCB
 DMA equ 0080H   ; Standard DMA area

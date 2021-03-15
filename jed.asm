@@ -39,6 +39,12 @@
 ; These keys over-write the keytable below.
 ; If no JED.KEY file is present, the default keys are used.
 
+; TODO:
+; * show_current_line and show_screen do similar things, but
+;   don't share the same code to do it.
+; * Skipping cols ignores syntax highlighting. We need to 
+;   start the current type of highlight at the end of a skip.
+
     org $0100
 
     jp main_program
@@ -94,13 +100,12 @@ main_program:
 
     call was_filename_provided
     call z, load_file
+    call add_syntax_highlighting
 
     call show_screen
 main_loop:
     call show_screen_if_scrolled
-    ;call show_cursor_coords
 main_loop_no_scroll_change:
-    ;call show_current_char
     call set_cursor_position
 main_loop_get_key:
     call get_user_action
@@ -116,6 +121,8 @@ main_loop_get_key:
     jp c, insert_char
     cp USER_QUIT
     jp z, save_and_exit
+    cp USER_QUIT_NO_SAVE
+    jp z, exit
     cp USER_CURSOR_RIGHT
     jp z, cursor_right
     cp USER_CURSOR_LEFT
@@ -195,7 +202,6 @@ normal_delete:
     ld e, l
     ld d, h
     inc hl
-    ;inc bc do we need this???
     ldir                                
 
     ld a, (need_to_redraw_screen)
@@ -416,6 +422,13 @@ show_current_line:
     ; Now redraw the row
     ld hl, (doc_pointer)
     call skip_to_start_of_line
+    push hl
+    call add_syntax_highlighting_to_row
+    pop hl
+
+    xor a
+    ld (comment_mode), a                ; We don't start in comment mode
+
     ld a, (screen_left)
     ld (current_col), a                 ; Keep track of the current column we are displaying
     call skip_cols
@@ -429,6 +442,28 @@ show_current_line1:
     jp z, show_current_line2
     cp TAB
     jp z, show_current_line_tab
+    bit 7, a                                    ; Is bit 7 set?
+    jr z, show_current_line_simple              ; Skip next bit if not set
+    ld c, a
+    ld a, (comment_mode)
+    or a
+    jr nz, show_current_line_simple1            ; Don't start comment if already in one
+    ld a, ESC
+    call print_a
+    ld a, '['
+    call print_a
+    ld a, '3'
+    call print_a
+    ld a, '2'
+    call print_a
+    ld a, 'm'
+    call print_a
+    ld a, 1
+    ld (comment_mode), a
+show_current_line_simple1:
+    ld a, c
+show_current_line_simple:     
+    and %01111111                       ; Clear bit 7
     call print_a
     ld a, (current_col)
     inc a
@@ -462,6 +497,16 @@ show_current_line_tab1:
     ld b, c
     djnz show_current_line1
 show_current_line_done:
+    xor a
+    ld (comment_mode), a
+    ld a, ESC
+    call print_a
+    ld a, '['
+    call print_a
+    ld a, '0'
+    call print_a
+    ld a, 'm'
+    call print_a
     call show_cursor
     ret
 
@@ -802,6 +847,7 @@ save_and_exit:
     call was_filename_provided
     jr nz, exit
 save_and_exit1:
+    call remove_syntax_highlighting
     call save_file
 exit:
     call cls
@@ -943,8 +989,8 @@ show_screen:
     ld hl, (doc_start)
     ld bc, (screen_top)
     call skip_lines
-    call cls 
     call hide_cursor
+    call cls 
     xor a
     ld (shown_lines), a
 show_screen_row:
@@ -952,6 +998,20 @@ show_screen_row:
     ld (current_col), a                 ; Keep track of the current column we are displaying
     call skip_cols
     jr z, shown_enough
+    ld a, (comment_mode)
+    or a
+    jr z, show_screen_h1
+    ld a, ESC
+    call print_a
+    ld a, '['
+    call print_a
+    ld a, '3'
+    call print_a
+    ld a, '2'
+    call print_a
+    ld a, 'm'
+    call print_a
+show_screen_h1:    
     ld a, (VIEW_WIDTH)                     
     ld b, a                             ; b = cols left to Show
 show_screen1:
@@ -962,6 +1022,28 @@ show_screen1:
     jp z, show_screen_eol
     cp TAB 
     jp z, show_screen_tab
+    bit 7, a                            ; Is bit 7 set?
+    jr z, show_screen_simple            ; Skip next bit if not set
+    ld c, a
+    ld a, (comment_mode)
+    or a
+    jr nz, show_screen_simple1          ; Don't start comment if already in one
+    ld a, ESC
+    call print_a
+    ld a, '['
+    call print_a
+    ld a, '3'
+    call print_a
+    ld a, '2'
+    call print_a
+    ld a, 'm'
+    call print_a
+    ld a, 1
+    ld (comment_mode), a
+show_screen_simple1:
+    ld a, c
+show_screen_simple:     
+    and %01111111                       ; Clear bit 7
     call print_a
     ld a, (current_col)
     inc a
@@ -974,6 +1056,20 @@ shown_enough:
     call skip_to_start_of_next_line
     dec hl
 show_screen_eol:
+    ld a, (comment_mode)
+    or a
+    jr z, show_screen_eol1              ; Are we in comment mode?
+    xor a                               ; If so, clear it
+    ld (comment_mode), a
+    ld a, ESC
+    call print_a
+    ld a, '['
+    call print_a
+    ld a, '0'
+    call print_a
+    ld a, 'm'
+    call print_a
+show_screen_eol1:    
     ld a, (screen_left)
     ld (current_col), a                 ; start a new row
     ld a, (shown_lines)
@@ -990,7 +1086,7 @@ show_screen_eol:
     ld a, 10
     call print_a
     inc hl
-    jr show_screen_row
+    jp show_screen_row
 show_screen_done:
     call show_cursor
     ret
@@ -1011,7 +1107,7 @@ show_screen_tab1:
     djnz show_screen_tab1
     inc hl
     pop bc
-    jr show_screen1
+    jp show_screen1
 
 skip_cols:
     ; We are pointing to the doc in hl.
@@ -1020,6 +1116,11 @@ skip_cols:
     ; Returns Z if could not skip that number of cols, or NZ if all good.
     ; Returns the new doc pointer in hl.
     ; Returns the new cursor_x in c.
+    ld c, a
+    xor a
+    ld (comment_mode), a            ; Clear comment_mode
+    ld a, c
+
     ld c, 0                         ; c = current col = 0
     or a
     jr z, skip_cols_done            ; return with NZ if no cols to skip
@@ -1053,6 +1154,11 @@ skip_col:
     add a, d
     ld c, a
 skip_cols_not_tab
+    cp ';'+128
+    jr nz, skip_cols_not_comment
+    ld a, 1
+    ld (comment_mode), a
+skip_cols_not_comment:
     inc c                           ; increase col counter
     inc hl                          ; increase doc pointer
     djnz skip_col
@@ -1307,6 +1413,7 @@ get_user_action4:
 
 include "constants.asm"
 include "funcs.asm"
+include "syntax.asm"
     
 ; variables
 cursor_x:
